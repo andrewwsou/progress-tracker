@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
-
-type Habit = {
-  id: number;
-  name: string;
-  description: string;
-  frequency: string;
-};
-
-const BACKEND_URL = "http://localhost:8080";
+import {
+  fetchHabits,
+  createHabit,
+  updateHabit,
+  deleteHabit,
+  type Habit,
+} from "./api";
 
 function App() {
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -15,13 +13,15 @@ function App() {
   const [description, setDescription] = useState("");
   const [frequency, setFrequency] = useState("DAILY");
   const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   async function loadHabits() {
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/habits`);
-      const data = await res.json();
+      const data = await fetchHabits();
       setHabits(data);
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -35,16 +35,47 @@ function App() {
     e.preventDefault();
     if (!name.trim()) return;
 
-    await fetch(`${BACKEND_URL}/api/habits`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, description, frequency }),
-    });
+    const payload = { name, description, frequency };
 
+    try {
+      if (editingId === null) {
+        await createHabit(payload);
+      } else {
+        await updateHabit(editingId, payload);
+      }
+
+      setEditingId(null);
+      setName("");
+      setDescription("");
+      setFrequency("DAILY");
+
+      await loadHabits();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleDelete(id: number) {
+    try {
+      await deleteHabit(id);
+      await loadHabits();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function startEdit(habit: Habit) {
+    setEditingId(habit.id);
+    setName(habit.name);
+    setDescription(habit.description);
+    setFrequency(habit.frequency);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
     setName("");
     setDescription("");
     setFrequency("DAILY");
-    loadHabits();
   }
 
   return (
@@ -93,7 +124,21 @@ function App() {
           </label>
         </div>
 
-        <button type="submit">Add Habit</button>
+        <div style={{ marginTop: "0.75rem" }}>
+          <button type="submit">
+            {editingId === null ? "Add Habit" : "Save Changes"}
+          </button>
+
+          {editingId !== null && (
+            <button
+              type="button"
+              onClick={cancelEdit}
+              style={{ marginLeft: "0.5rem" }}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </form>
 
       <section>
@@ -104,7 +149,9 @@ function App() {
           {habits.map((habit) => (
             <li key={habit.id}>
               <strong>{habit.name}</strong> ({habit.frequency}) —{" "}
-              {habit.description}
+              {habit.description}{" "}
+              <button onClick={() => startEdit(habit)}>Edit</button>{" "}
+              <button onClick={() => handleDelete(habit.id)}>Delete</button>
             </li>
           ))}
         </ul>
