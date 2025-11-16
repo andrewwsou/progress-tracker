@@ -3,6 +3,8 @@ package com.progresstracker.progresstracker.controller;
 import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.repository.HabitRepository;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -25,5 +27,27 @@ public class HabitController {
     @PostMapping
     public Habit createHabit(@RequestBody Habit habit) {
         return habitRepository.save(habit);
+    }
+
+    @DeleteMapping("/{id}")
+    public void delete(@PathVariable Long id) {
+        if (!habitRepository.existsById(id)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Habit not found");
+        }
+        habitRepository.deleteById(id);
+    }
+
+    @PutMapping("/{id}")
+    public Habit update(@PathVariable Long id, @RequestBody Habit updated) {
+        return habitRepository.findById(id)
+                .map(existing -> {
+                    existing.setName(updated.getName());
+                    existing.setDescription(updated.getDescription());
+                    existing.setFrequency(updated.getFrequency());
+                    return habitRepository.save(existing);
+                })
+                .orElseThrow(() ->
+                        new ResponseStatusException(HttpStatus.NOT_FOUND, "Habit not found")
+                );
     }
 }
