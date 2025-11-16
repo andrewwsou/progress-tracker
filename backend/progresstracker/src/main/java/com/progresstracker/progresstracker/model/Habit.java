@@ -1,4 +1,5 @@
 package com.progresstracker.progresstracker.model;
+import com.habithero.backend.model.User;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
@@ -8,6 +9,9 @@ public class Habit {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User user;
     private Long id;
 
     private String name;
