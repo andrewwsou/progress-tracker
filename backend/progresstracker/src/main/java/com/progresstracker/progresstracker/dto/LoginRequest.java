@@ -1,4 +1,4 @@
-package com.habithero.backend.dto;
+package com.progresstracker.progresstracker.dto;
 
 public class LoginRequest {
     private String email;

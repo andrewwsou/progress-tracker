@@ -1,66 +1,53 @@
 package com.progresstracker.progresstracker.model;
-import com.habithero.backend.model.User;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
 public class Habit {
 
+    public enum Frequency {
+        DAILY,
+        WEEKLY
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id")
-    private User user;
     private Long id;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    @JsonIgnore
+    private User user;
+
     private String name;
+
     private String description;
-    private String frequency;
 
-    private LocalDateTime createdAt = LocalDateTime.now();
+    @Enumerated(EnumType.STRING)
+    private Frequency frequency;
 
-    public Habit() {}
+    private LocalDateTime createdAt;
+
+    public Habit() {
+    }
+
+    public Habit(User user, String name, String description, Frequency frequency) {
+        this.user = user;
+        this.name = name;
+        this.description = description;
+        this.frequency = frequency;
+        this.createdAt = LocalDateTime.now();
+    }
 
 
     public Long getId() {
         return id;
     }
 
-    public String getName() {
-        return name;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public String getFrequency() {
-        return frequency;
-    }
-
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
-    }
-
     public void setId(Long id) {
         this.id = id;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public void setDescription(String description) {
-        this.description = description;
-    }
-
-    public void setFrequency(String frequency) {
-        this.frequency = frequency;
-    }
-
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
     }
 
     public User getUser() {
@@ -71,4 +58,35 @@ public class Habit {
         this.user = user;
     }
 
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public Frequency getFrequency() {
+        return frequency;
+    }
+
+    public void setFrequency(Frequency frequency) {
+        this.frequency = frequency;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
 }

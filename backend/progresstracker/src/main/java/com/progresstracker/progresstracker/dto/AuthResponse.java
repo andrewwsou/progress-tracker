@@ -1,4 +1,4 @@
-package com.habithero.backend.dto;
+package com.progresstracker.progresstracker.dto;
 
 public class AuthResponse {
     private String token;

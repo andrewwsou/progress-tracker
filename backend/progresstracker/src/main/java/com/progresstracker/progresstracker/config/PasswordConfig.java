@@ -1,4 +1,4 @@
-package com.habithero.backend.config;
+package com.progresstracker.progresstracker.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
