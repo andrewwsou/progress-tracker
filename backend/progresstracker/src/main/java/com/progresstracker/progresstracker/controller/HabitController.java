@@ -5,6 +5,8 @@ import com.progresstracker.progresstracker.repository.HabitRepository;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.security.core.Authentication;
+import com.progresstracker.progresstracker.backend.model.User;
 
 import java.util.List;
 
@@ -20,12 +22,15 @@ public class HabitController {
     }
 
     @GetMapping
-    public List<Habit> getAllHabits() {
-        return habitRepository.findAll();
+    public List<Habit> getAllHabits(Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        return habitRepository.findByUser(user);
     }
 
     @PostMapping
-    public Habit createHabit(@RequestBody Habit habit) {
+    public Habit createHabit(@RequestBody Habit habit, Authentication authentication) {
+        User user = (User) authentication.getPrincipal();
+        habit.setUser(user);
         return habitRepository.save(habit);
     }
 
