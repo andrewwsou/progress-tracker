@@ -1,6 +1,6 @@
-package com.habithero.backend.repository;
+package com.progresstracker.progresstracker.repository;
 
-import com.habithero.backend.model.User;
+import com.progresstracker.progresstracker.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;

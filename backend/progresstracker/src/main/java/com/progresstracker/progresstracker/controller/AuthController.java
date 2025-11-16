@@ -1,11 +1,11 @@
-package com.habithero.backend.controller;
+package com.progresstracker.progresstracker.controller;
 
-import com.habithero.backend.dto.AuthResponse;
-import com.habithero.backend.dto.LoginRequest;
-import com.habithero.backend.dto.RegisterRequest;
-import com.habithero.backend.model.User;
-import com.habithero.backend.repository.UserRepository;
-import com.habithero.backend.security.JwtService;
+import com.progresstracker.progresstracker.dto.AuthResponse;
+import com.progresstracker.progresstracker.dto.LoginRequest;
+import com.progresstracker.progresstracker.dto.RegisterRequest;
+import com.progresstracker.progresstracker.model.User;
+import com.progresstracker.progresstracker.repository.UserRepository;
+import com.progresstracker.progresstracker.security.JwtService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -30,9 +30,14 @@ public class AuthController {
 
     @PostMapping("/register")
     public AuthResponse register(@RequestBody RegisterRequest request) {
+        if (request.getEmail() == null || request.getPassword() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email and password are required");
+        }
+
         if (userRepository.findByEmail(request.getEmail()).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already used");
         }
+
         String hash = passwordEncoder.encode(request.getPassword());
         User user = new User(request.getEmail(), hash);
         userRepository.save(user);
@@ -43,6 +48,10 @@ public class AuthController {
 
     @PostMapping("/login")
     public AuthResponse login(@RequestBody LoginRequest request) {
+        if (request.getEmail() == null || request.getPassword() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email and password are required");
+        }
+
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() ->
                         new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));

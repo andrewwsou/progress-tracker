@@ -1,7 +1,7 @@
-package com.habithero.backend.security;
+package com.progresstracker.progresstracker.security;
 
-import com.habithero.backend.model.User;
-import com.habithero.backend.repository.UserRepository;
+import com.progresstracker.progresstracker.model.User;
+import com.progresstracker.progresstracker.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
@@ -56,9 +57,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         }
 
         UsernamePasswordAuthenticationToken auth =
-                new UsernamePasswordAuthenticationToken(
-                        user, null, java.util.List.of()
-                );
+                new UsernamePasswordAuthenticationToken(user, null, List.of());
         auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
         SecurityContextHolder.getContext().setAuthentication(auth);
 

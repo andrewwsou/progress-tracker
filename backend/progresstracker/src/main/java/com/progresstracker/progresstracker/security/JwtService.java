@@ -1,28 +1,40 @@
-package com.habithero.backend.security;
+package com.progresstracker.progresstracker.security;
 
-import io.jsonwebtoken.*;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 
 @Service
 public class JwtService {
 
-    private final Key key = Keys.secretKeyFor(SignatureAlgorithm.HS256);
-    private final long expirationMs = 1000 * 60 * 60 * 24;
+    private static final String SECRET = "super-secret-habithero-key-32-bytes-long!!";
+
+    private final Key key;
+    private final long expirationMs = 1000L * 60 * 60 * 24;
+
+    public JwtService() {
+        this.key = Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8));
+    }
 
     public String generateToken(String email) {
         Date now = new Date();
         Date exp = new Date(now.getTime() + expirationMs);
 
-        return Jwts.builder()
+        String token = Jwts.builder()
                 .setSubject(email)
                 .setIssuedAt(now)
                 .setExpiration(exp)
-                .signWith(key)
+                .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
+
+        System.out.println("GENERATED TOKEN for " + email + ": " + token.substring(0, 30) + "...");
+        return token;
     }
 
     public String extractEmail(String token) {
@@ -33,7 +45,7 @@ public class JwtService {
         try {
             parseClaims(token);
             return true;
-        } catch (JwtException e) {
+        } catch (Exception e) {
             return false;
         }
     }

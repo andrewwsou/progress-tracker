@@ -1,4 +1,4 @@
-package com.habithero.backend.model;
+package com.progresstracker.progresstracker.model;
 
 import jakarta.persistence.*;
 
