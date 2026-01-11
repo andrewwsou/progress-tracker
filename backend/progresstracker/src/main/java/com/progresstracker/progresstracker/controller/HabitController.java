@@ -7,6 +7,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.core.Authentication;
+import com.progresstracker.progresstracker.service.HabitProgressService;
+import com.progresstracker.progresstracker.repository.UserRepository;
+import org.springframework.http.ResponseEntity;
+
 
 import java.util.List;
 
@@ -16,9 +20,13 @@ import java.util.List;
 public class HabitController {
 
     private final HabitRepository habitRepository;
+    private final UserRepository userRepository;
+    private final HabitProgressService habitProgressService;
 
-    public HabitController(HabitRepository habitRepository) {
+    public HabitController(HabitRepository habitRepository, UserRepository userRepository, HabitProgressService habitProgressService) {
         this.habitRepository = habitRepository;
+        this.userRepository = userRepository;
+        this.habitProgressService = habitProgressService;
     }
 
     private User requireUser(Authentication authentication) {
@@ -74,5 +82,18 @@ public class HabitController {
                 .orElseThrow(() ->
                         new ResponseStatusException(HttpStatus.NOT_FOUND, "Habit not found")
                 );
+    }
+
+    @PostMapping("/{id}/complete")
+    public ResponseEntity<?> completeHabit(@PathVariable Long id, Authentication authentication) {
+        User user = requireUser(authentication);
+
+        Habit habit = habitRepository.findById(id).orElse(null);
+        if (habit == null || habit.getUser() == null || !habit.getUser().getId().equals(user.getId())) {
+            return ResponseEntity.status(404).body("Habit not found");
+        }
+
+        Habit updated = habitProgressService.completeToday(id);
+        return ResponseEntity.ok(updated);
     }
 }
