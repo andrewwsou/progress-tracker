@@ -10,6 +10,8 @@ import org.springframework.security.core.Authentication;
 import com.progresstracker.progresstracker.service.HabitProgressService;
 import com.progresstracker.progresstracker.repository.UserRepository;
 import org.springframework.http.ResponseEntity;
+import com.progresstracker.progresstracker.repository.HabitEntryRepository;
+import org.springframework.transaction.annotation.Transactional;
 
 
 import java.util.List;
@@ -22,11 +24,16 @@ public class HabitController {
     private final HabitRepository habitRepository;
     private final UserRepository userRepository;
     private final HabitProgressService habitProgressService;
+    private final HabitEntryRepository habitEntryRepository;
 
-    public HabitController(HabitRepository habitRepository, UserRepository userRepository, HabitProgressService habitProgressService) {
+    public HabitController(HabitRepository habitRepository,
+                           UserRepository userRepository,
+                           HabitProgressService habitProgressService,
+                           HabitEntryRepository habitEntryRepository) {
         this.habitRepository = habitRepository;
         this.userRepository = userRepository;
         this.habitProgressService = habitProgressService;
+        this.habitEntryRepository = habitEntryRepository;
     }
 
     private User requireUser(Authentication authentication) {
@@ -50,6 +57,7 @@ public class HabitController {
     }
 
     @DeleteMapping("/{id}")
+    @Transactional
     public void delete(@PathVariable Long id, Authentication authentication) {
         User user = requireUser(authentication);
 
@@ -60,8 +68,10 @@ public class HabitController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot delete someone else's habit");
         }
 
+        habitEntryRepository.deleteByHabitId(id);
         habitRepository.delete(habit);
     }
+
 
     @PutMapping("/{id}")
     public Habit update(@PathVariable Long id,
@@ -85,15 +95,17 @@ public class HabitController {
     }
 
     @PostMapping("/{id}/complete")
-    public ResponseEntity<?> completeHabit(@PathVariable Long id, Authentication authentication) {
+    public Habit completeHabit(@PathVariable Long id, Authentication authentication) {
         User user = requireUser(authentication);
 
-        Habit habit = habitRepository.findById(id).orElse(null);
-        if (habit == null || habit.getUser() == null || !habit.getUser().getId().equals(user.getId())) {
-            return ResponseEntity.status(404).body("Habit not found");
+        Habit habit = habitRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Habit not found"));
+
+        if (habit.getUser() == null || !habit.getUser().getId().equals(user.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot complete someone else's habit");
         }
 
-        Habit updated = habitProgressService.completeToday(id);
-        return ResponseEntity.ok(updated);
+        return habitProgressService.completeToday(habit);
     }
+
 }

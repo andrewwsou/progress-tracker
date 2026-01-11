@@ -7,6 +7,7 @@ import com.progresstracker.progresstracker.repository.HabitRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+
 import java.time.LocalDate;
 
 @Service
@@ -21,10 +22,7 @@ public class HabitProgressService {
     }
 
     @Transactional
-    public Habit completeToday(Long habitId) {
-        Habit habit = habitRepository.findById(habitId)
-                .orElseThrow(() -> new IllegalArgumentException("Habit not found: " + habitId));
-
+    public Habit completeToday(Habit habit) {
         LocalDate today = LocalDate.now();
 
         if (habitEntryRepository.findByHabitAndCompletedDate(habit, today).isPresent()) {
@@ -38,8 +36,6 @@ public class HabitProgressService {
             nextStreak = 1;
         } else if (today.equals(last.plusDays(1))) {
             nextStreak = habit.getCurrentStreak() + 1;
-        } else if (today.equals(last)) {
-            nextStreak = habit.getCurrentStreak();
         } else {
             nextStreak = 1;
         }
@@ -54,4 +50,5 @@ public class HabitProgressService {
         habitEntryRepository.save(new HabitEntry(habit, today, xpEarned));
         return habitRepository.save(habit);
     }
+
 }
