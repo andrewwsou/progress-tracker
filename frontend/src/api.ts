@@ -3,8 +3,8 @@ export const BACKEND_URL = "http://localhost:8080";
 export type Habit = {
   id: number;
   name: string;
-  description?: string;
-  frequency?: string;
+  description: string;
+  frequency: string;
 
   xpTotal?: number;
   currentStreak?: number;
@@ -111,11 +111,12 @@ export async function deleteHabit(id: number) {
   if (!res.ok) throw new Error("Failed to delete habit");
 }
 
-export async function completeHabit(token: string, habitId: number): Promise<Habit> {
+export async function completeHabit(habitId: number): Promise<Habit> {
   const res = await fetch(`${BACKEND_URL}/api/habits/${habitId}/complete`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...authHeaders(),
     },
   });
 

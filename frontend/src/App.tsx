@@ -1,13 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Habit } from "./api";
-import {
-  fetchHabits,
-  createHabit,
-  updateHabit,
-  deleteHabit,
-  loginUser,
-  registerUser,
-} from "./api";
+import { fetchHabits, createHabit, updateHabit, deleteHabit, loginUser, registerUser, completeHabit } from "./api";
 
 type AuthMode = "login" | "register";
 
@@ -27,14 +20,11 @@ function App() {
 
   useEffect(() => {
     const stored = localStorage.getItem("token");
-    if (stored) {
-      setToken(stored);
-    }
+    if (stored) setToken(stored);
   }, []);
 
   useEffect(() => {
-    if (!token) return;
-    loadHabits();
+    if (token) loadHabits();
   }, [token]);
 
   async function loadHabits() {
@@ -42,31 +32,23 @@ function App() {
     try {
       const data = await fetchHabits();
       setHabits(data);
-    } catch (err) {
-      console.error(err);
     } finally {
       setLoading(false);
     }
   }
 
-
   async function handleAuthSubmit(e: React.FormEvent) {
     e.preventDefault();
     setAuthError(null);
     try {
-      let newToken: string;
-      if (authMode === "login") {
-        newToken = await loginUser(email, password);
-      } else {
-        newToken = await registerUser(email, password);
-      }
-      console.log("newToken from auth:", newToken);
+      const newToken = authMode === "login"
+        ? await loginUser(email, password)
+        : await registerUser(email, password);
 
       localStorage.setItem("token", newToken);
       setToken(newToken);
       setPassword("");
     } catch (err: any) {
-      console.error(err);
       setAuthError(err.message || "Authentication failed");
     }
   }
@@ -75,210 +57,97 @@ function App() {
     localStorage.removeItem("token");
     setToken(null);
     setHabits([]);
-    setEmail("");
-    setPassword("");
-    setEditingId(null);
-    setName("");
-    setDescription("");
-    setFrequency("DAILY");
   }
-
 
   async function handleSubmitHabit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-
     const payload = { name, description, frequency };
-
-    try {
-      if (editingId === null) {
-        await createHabit(payload);
-      } else {
-        await updateHabit(editingId, payload);
-      }
-      setEditingId(null);
-      setName("");
-      setDescription("");
-      setFrequency("DAILY");
-      loadHabits();
-    } catch (err) {
-      console.error(err);
+    if (editingId === null) {
+      await createHabit(payload);
+    } else {
+      await updateHabit(editingId, payload);
     }
-  }
-
-  async function handleDeleteHabit(id: number) {
-    try {
-      await deleteHabit(id);
-      loadHabits();
-    } catch (err) {
-      console.error(err);
-    }
-  }
-
-  function startEditHabit(habit: Habit) {
-    setEditingId(habit.id);
-    setName(habit.name);
-    setDescription(habit.description);
-    setFrequency(habit.frequency);
-  }
-
-  function cancelEdit() {
     setEditingId(null);
     setName("");
     setDescription("");
     setFrequency("DAILY");
+    loadHabits();
   }
 
+  async function handleDeleteHabit(id: number) {
+    await deleteHabit(id);
+    loadHabits();
+  }
+
+  async function handleCompleteHabit(id: number) {
+    await completeHabit(id);
+    loadHabits();
+  }
+
+  function startEditHabit(h: Habit) {
+    setEditingId(h.id);
+    setName(h.name);
+    setDescription(h.description);
+    setFrequency(h.frequency);
+  }
 
   if (!token) {
     return (
-      <main
-        style={{
-          maxWidth: 400,
-          margin: "0 auto",
-          padding: "2rem",
-          fontFamily: "system-ui, -apple-system, BlinkMacSystemFont",
-        }}
-      >
+      <main style={{ maxWidth: 400, margin: "0 auto", padding: "2rem" }}>
         <h1>HabitHero</h1>
         <h2>{authMode === "login" ? "Login" : "Register"}</h2>
 
         <form onSubmit={handleAuthSubmit}>
-          <div style={{ marginBottom: "0.75rem" }}>
-            <label>
-              Email{" "}
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </label>
-          </div>
-
-          <div style={{ marginBottom: "0.75rem" }}>
-            <label>
-              Password{" "}
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </label>
-          </div>
-
-          {authError && (
-            <p style={{ color: "red", marginBottom: "0.75rem" }}>{authError}</p>
-          )}
-
-          <button type="submit">
-            {authMode === "login" ? "Log In" : "Create Account"}
-          </button>
+          <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
+          <input placeholder="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+          {authError && <p style={{ color: "red" }}>{authError}</p>}
+          <button type="submit">{authMode === "login" ? "Log In" : "Register"}</button>
         </form>
 
-        <p style={{ marginTop: "1rem" }}>
-          {authMode === "login" ? "Need an account?" : "Already have an account?"}{" "}
-          <button
-            type="button"
-            onClick={() =>
-              setAuthMode(authMode === "login" ? "register" : "login")
-            }
-          >
-            {authMode === "login" ? "Register" : "Log In"}
-          </button>
-        </p>
+        <button onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}>
+          {authMode === "login" ? "Create account" : "Login"}
+        </button>
       </main>
     );
   }
 
   return (
-    <main
-      style={{
-        maxWidth: 800,
-        margin: "0 auto",
-        padding: "2rem",
-        fontFamily: "system-ui, -apple-system, BlinkMacSystemFont",
-      }}
-    >
-      <header style={{ display: "flex", justifyContent: "space-between", marginBottom: "1.5rem" }}>
+    <main style={{ maxWidth: 900, margin: "0 auto", padding: "2rem" }}>
+      <header style={{ display: "flex", justifyContent: "space-between" }}>
         <h1>HabitHero</h1>
-        <button type="button" onClick={handleLogout}>
-          Logout
-        </button>
+        <button onClick={handleLogout}>Logout</button>
       </header>
 
-      <section style={{ marginBottom: "2rem" }}>
-        <h2>{editingId === null ? "Add Habit" : "Edit Habit"}</h2>
-        <form onSubmit={handleSubmitHabit}>
-          <div style={{ marginBottom: "0.5rem" }}>
-            <label>
-              Name{" "}
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-            </label>
-          </div>
+      <form onSubmit={handleSubmitHabit}>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Habit name" />
+        <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Description" />
+        <select value={frequency} onChange={e => setFrequency(e.target.value)}>
+          <option value="DAILY">Daily</option>
+          <option value="WEEKLY">Weekly</option>
+        </select>
+        <button type="submit">{editingId ? "Save" : "Add"}</button>
+      </form>
 
-          <div style={{ marginBottom: "0.5rem" }}>
-            <label>
-              Description{" "}
-              <input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </label>
-          </div>
+      <h2>Your Habits</h2>
 
-          <div style={{ marginBottom: "0.5rem" }}>
-            <label>
-              Frequency{" "}
-              <select
-                value={frequency}
-                onChange={(e) => setFrequency(e.target.value)}
-              >
-                <option value="DAILY">Daily</option>
-                <option value="WEEKLY">Weekly</option>
-              </select>
-            </label>
-          </div>
+      {loading && <p>Loading…</p>}
 
-          <div style={{ marginTop: "0.75rem" }}>
-            <button type="submit">
-              {editingId === null ? "Add Habit" : "Save Changes"}
-            </button>
-            {editingId !== null && (
-              <button
-                type="button"
-                onClick={cancelEdit}
-                style={{ marginLeft: "0.5rem" }}
-              >
-                Cancel
-              </button>
-            )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
+        {habits.map(h => (
+          <div key={h.id} style={{ border: "1px solid #ccc", padding: "1rem", borderRadius: 8 }}>
+            <h3>{h.name}</h3>
+            <p>{h.description}</p>
+            <p>{h.frequency}</p>
+            <p>Current Streak: {h.currentStreak}</p>
+            <p>Longest Streak: {h.longestStreak}</p>
+            <p>XP: {h.xpTotal}</p>
+            <button onClick={() => handleCompleteHabit(h.id)}>Complete</button>
+            <button onClick={() => startEditHabit(h)}>Edit</button>
+            <button onClick={() => handleDeleteHabit(h.id)}>Delete</button>
           </div>
-        </form>
-      </section>
-
-      <section>
-        <h2>Your Habits</h2>
-        {loading && <p>Loading...</p>}
-        {!loading && habits.length === 0 && <p>No habits yet.</p>}
-        <ul>
-          {habits.map((habit) => (
-            <li key={habit.id}>
-              <strong>{habit.name}</strong> ({habit.frequency}) —{" "}
-              {habit.description}{" "}
-              <button onClick={() => startEditHabit(habit)}>Edit</button>{" "}
-              <button onClick={() => handleDeleteHabit(habit.id)}>
-                Delete
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
+        ))}
+      </div>
     </main>
   );
 }
