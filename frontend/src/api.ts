@@ -115,7 +115,6 @@ export async function completeHabit(habitId: number): Promise<Habit> {
   const res = await fetch(`${BACKEND_URL}/api/habits/${habitId}/complete`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
       ...authHeaders(),
     },
   });
