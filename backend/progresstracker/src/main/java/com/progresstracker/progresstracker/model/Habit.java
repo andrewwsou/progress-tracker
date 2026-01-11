@@ -3,6 +3,9 @@ package com.progresstracker.progresstracker.model;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 
 @Entity
 public class Habit {
@@ -15,6 +18,11 @@ public class Habit {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    private int xpTotal = 0;
+    private int currentStreak = 0;
+    private int longestStreak = 0;
+
+    private LocalDate lastCompletedDate;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
@@ -53,7 +61,6 @@ public class Habit {
     public User getUser() {
         return user;
     }
-
     public void setUser(User user) {
         this.user = user;
     }
@@ -61,7 +68,6 @@ public class Habit {
     public String getName() {
         return name;
     }
-
     public void setName(String name) {
         this.name = name;
     }
@@ -69,7 +75,6 @@ public class Habit {
     public String getDescription() {
         return description;
     }
-
     public void setDescription(String description) {
         this.description = description;
     }
@@ -77,7 +82,6 @@ public class Habit {
     public Frequency getFrequency() {
         return frequency;
     }
-
     public void setFrequency(Frequency frequency) {
         this.frequency = frequency;
     }
@@ -85,8 +89,19 @@ public class Habit {
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
-
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
+
+    public int getXpTotal() { return xpTotal; }
+    public void setXpTotal(int xpTotal) { this.xpTotal = xpTotal; }
+
+    public int getCurrentStreak() { return currentStreak; }
+    public void setCurrentStreak(int currentStreak) { this.currentStreak = currentStreak; }
+
+    public int getLongestStreak() { return longestStreak; }
+    public void setLongestStreak(int longestStreak) { this.longestStreak = longestStreak; }
+
+    public LocalDate getLastCompletedDate() { return lastCompletedDate; }
+    public void setLastCompletedDate(LocalDate lastCompletedDate) { this.lastCompletedDate = lastCompletedDate; }
 }
