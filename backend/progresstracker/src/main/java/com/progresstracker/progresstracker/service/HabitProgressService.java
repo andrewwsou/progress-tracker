@@ -66,6 +66,18 @@ public class HabitProgressService {
         return saved;
     }
 
+    @Transactional
+    public Habit recordCompletionOnly(Habit habit) {
+        LocalDate today = LocalDate.now();
+
+        if (alreadyCompletedForPeriod(habit, today)) {
+            return habit;
+        }
+
+        habitEntryRepository.save(new HabitEntry(habit, today, 0));
+        return habit;
+    }
+
     private boolean alreadyCompletedForPeriod(Habit habit, LocalDate today) {
         if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
             LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));

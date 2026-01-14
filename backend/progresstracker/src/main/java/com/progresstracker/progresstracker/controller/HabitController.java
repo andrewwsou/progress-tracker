@@ -2,20 +2,22 @@ package com.progresstracker.progresstracker.controller;
 
 import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.model.User;
+import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
+import com.progresstracker.progresstracker.repository.UserRepository;
+import com.progresstracker.progresstracker.service.CompletionQueueService;
+import com.progresstracker.progresstracker.service.HabitProgressService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
-import org.springframework.security.core.Authentication;
-import com.progresstracker.progresstracker.service.HabitProgressService;
-import com.progresstracker.progresstracker.repository.UserRepository;
-import com.progresstracker.progresstracker.repository.HabitEntryRepository;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.temporal.TemporalAdjusters;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/habits")
@@ -26,15 +28,21 @@ public class HabitController {
     private final UserRepository userRepository;
     private final HabitProgressService habitProgressService;
     private final HabitEntryRepository habitEntryRepository;
+    private final CompletionQueueService completionQueueService;
+
+    @Value("${queue.enabled:false}")
+    private boolean queueEnabled;
 
     public HabitController(HabitRepository habitRepository,
                            UserRepository userRepository,
                            HabitProgressService habitProgressService,
-                           HabitEntryRepository habitEntryRepository) {
+                           HabitEntryRepository habitEntryRepository,
+                           CompletionQueueService completionQueueService) {
         this.habitRepository = habitRepository;
         this.userRepository = userRepository;
         this.habitProgressService = habitProgressService;
         this.habitEntryRepository = habitEntryRepository;
+        this.completionQueueService = completionQueueService;
     }
 
     private User requireUser(Authentication authentication) {
@@ -101,7 +109,9 @@ public class HabitController {
                         existing.setGoalPeriod(updated.getGoalPeriod());
                     }
                     applyGoalDefaults(existing);
-                    return habitRepository.save(existing);
+                    Habit saved = habitRepository.save(existing);
+                    applyProgressFields(saved);
+                    return saved;
                 })
                 .orElseThrow(() ->
                         new ResponseStatusException(HttpStatus.NOT_FOUND, "Habit not found")
@@ -119,7 +129,14 @@ public class HabitController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot complete someone else's habit");
         }
 
-        Habit updated = habitProgressService.completeToday(habit);
+        Habit updated;
+        if (queueEnabled) {
+            updated = habitProgressService.recordCompletionOnly(habit);
+            completionQueueService.enqueueCompletion(user.getId(), habit.getId(), LocalDate.now());
+        } else {
+            updated = habitProgressService.completeToday(habit);
+        }
+
         applyProgressFields(updated);
         return updated;
     }
