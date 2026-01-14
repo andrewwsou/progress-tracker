@@ -28,7 +28,8 @@ public class Achievement {
     @Column(name = "type", nullable = false)
     private String type;
 
-    public Achievement() {}
+    public Achievement() {
+    }
 
     public Achievement(String code, String name, String description, Integer threshold, String type) {
         this.code = code;
@@ -38,17 +39,51 @@ public class Achievement {
         this.type = type;
     }
 
-    public Long getId() { return id; }
-    public String getCode() { return code; }
-    public String getName() { return name; }
-    public String getDescription() { return description; }
-    public Integer getThreshold() { return threshold; }
-    public String getType() { return type; }
+    public Long getId() {
+        return id;
+    }
 
-    public void setId(Long id) { this.id = id; }
-    public void setCode(String code) { this.code = code; }
-    public void setName(String name) { this.name = name; }
-    public void setDescription(String description) { this.description = description; }
-    public void setThreshold(Integer threshold) { this.threshold = threshold; }
-    public void setType(String type) { this.type = type; }
+    public String getCode() {
+        return code;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public Integer getThreshold() {
+        return threshold;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public void setThreshold(Integer threshold) {
+        this.threshold = threshold;
+    }
+
+    public void setType(String type) {
+        this.type = type;
+    }
 }
