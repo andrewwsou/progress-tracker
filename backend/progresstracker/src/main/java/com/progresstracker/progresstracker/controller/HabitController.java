@@ -9,12 +9,13 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.security.core.Authentication;
 import com.progresstracker.progresstracker.service.HabitProgressService;
 import com.progresstracker.progresstracker.repository.UserRepository;
-import org.springframework.http.ResponseEntity;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import org.springframework.transaction.annotation.Transactional;
 
-
 import java.util.List;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.temporal.TemporalAdjusters;
 
 @RestController
 @RequestMapping("/api/habits")
@@ -46,14 +47,21 @@ public class HabitController {
     @GetMapping
     public List<Habit> getAllHabits(Authentication authentication) {
         User user = requireUser(authentication);
-        return habitRepository.findByUser(user);
+        List<Habit> habits = habitRepository.findByUser(user);
+        for (Habit h : habits) {
+            applyProgressFields(h);
+        }
+        return habits;
     }
 
     @PostMapping
     public Habit createHabit(@RequestBody Habit habit, Authentication authentication) {
         User user = requireUser(authentication);
         habit.setUser(user);
-        return habitRepository.save(habit);
+        applyGoalDefaults(habit);
+        Habit saved = habitRepository.save(habit);
+        applyProgressFields(saved);
+        return saved;
     }
 
     @DeleteMapping("/{id}")
@@ -72,7 +80,6 @@ public class HabitController {
         habitRepository.delete(habit);
     }
 
-
     @PutMapping("/{id}")
     public Habit update(@PathVariable Long id,
                         @RequestBody Habit updated,
@@ -87,6 +94,13 @@ public class HabitController {
                     existing.setName(updated.getName());
                     existing.setDescription(updated.getDescription());
                     existing.setFrequency(updated.getFrequency());
+                    if (updated.getGoalTargetCount() != null) {
+                        existing.setGoalTargetCount(updated.getGoalTargetCount());
+                    }
+                    if (updated.getGoalPeriod() != null) {
+                        existing.setGoalPeriod(updated.getGoalPeriod());
+                    }
+                    applyGoalDefaults(existing);
                     return habitRepository.save(existing);
                 })
                 .orElseThrow(() ->
@@ -105,7 +119,38 @@ public class HabitController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot complete someone else's habit");
         }
 
-        return habitProgressService.completeToday(habit);
+        Habit updated = habitProgressService.completeToday(habit);
+        applyProgressFields(updated);
+        return updated;
     }
 
+    private void applyGoalDefaults(Habit habit) {
+        if (habit.getGoalTargetCount() == null || habit.getGoalTargetCount() <= 0) {
+            habit.setGoalTargetCount(1);
+        }
+        if (habit.getGoalPeriod() == null) {
+            if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
+                habit.setGoalPeriod(Habit.GoalPeriod.WEEKLY);
+            } else {
+                habit.setGoalPeriod(Habit.GoalPeriod.DAILY);
+            }
+        }
+    }
+
+    private void applyProgressFields(Habit habit) {
+        applyGoalDefaults(habit);
+
+        LocalDate today = LocalDate.now();
+        int count;
+        if (habit.getGoalPeriod() == Habit.GoalPeriod.WEEKLY) {
+            LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+            LocalDate end = start.plusDays(6);
+            count = (int) habitEntryRepository.countByHabitAndCompletedDateBetween(habit, start, end);
+        } else {
+            count = habitEntryRepository.findByHabitAndCompletedDate(habit, today).isPresent() ? 1 : 0;
+        }
+
+        habit.setProgressCount(count);
+        habit.setProgressTargetCount(habit.getGoalTargetCount());
+    }
 }

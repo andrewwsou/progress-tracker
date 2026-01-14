@@ -2,30 +2,39 @@ package com.progresstracker.progresstracker.service;
 
 import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.model.HabitEntry;
+import com.progresstracker.progresstracker.model.User;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-
+import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.temporal.TemporalAdjusters;
+import java.time.temporal.WeekFields;
 
 @Service
 public class HabitProgressService {
 
     private final HabitRepository habitRepository;
     private final HabitEntryRepository habitEntryRepository;
+    private final AchievementService achievementService;
 
-    public HabitProgressService(HabitRepository habitRepository, HabitEntryRepository habitEntryRepository) {
+    public HabitProgressService(
+            HabitRepository habitRepository,
+            HabitEntryRepository habitEntryRepository,
+            AchievementService achievementService
+    ) {
         this.habitRepository = habitRepository;
         this.habitEntryRepository = habitEntryRepository;
+        this.achievementService = achievementService;
     }
 
     @Transactional
     public Habit completeToday(Habit habit) {
         LocalDate today = LocalDate.now();
 
-        if (habitEntryRepository.findByHabitAndCompletedDate(habit, today).isPresent()) {
+        if (alreadyCompletedForPeriod(habit, today)) {
             return habit;
         }
 
@@ -34,10 +43,8 @@ public class HabitProgressService {
 
         if (last == null) {
             nextStreak = 1;
-        } else if (today.equals(last.plusDays(1))) {
-            nextStreak = habit.getCurrentStreak() + 1;
         } else {
-            nextStreak = 1;
+            nextStreak = isConsecutivePeriod(habit, last, today) ? habit.getCurrentStreak() + 1 : 1;
         }
 
         habit.setCurrentStreak(nextStreak);
@@ -48,7 +55,39 @@ public class HabitProgressService {
         habit.setXpTotal(habit.getXpTotal() + xpEarned);
 
         habitEntryRepository.save(new HabitEntry(habit, today, xpEarned));
-        return habitRepository.save(habit);
+
+        Habit saved = habitRepository.save(habit);
+
+        User user = habit.getUser();
+        if (user != null) {
+            achievementService.evaluateAndUnlock(user, saved);
+        }
+
+        return saved;
     }
 
+    private boolean alreadyCompletedForPeriod(Habit habit, LocalDate today) {
+        if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
+            LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+            LocalDate end = start.plusDays(6);
+            return habitEntryRepository.countByHabitAndCompletedDateBetween(habit, start, end) > 0;
+        }
+        return habitEntryRepository.findByHabitAndCompletedDate(habit, today).isPresent();
+    }
+
+    private boolean isConsecutivePeriod(Habit habit, LocalDate lastCompleted, LocalDate today) {
+        if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
+            return isSameIsoWeek(lastCompleted, today.minusWeeks(1));
+        }
+        return today.equals(lastCompleted.plusDays(1));
+    }
+
+    private boolean isSameIsoWeek(LocalDate a, LocalDate b) {
+        WeekFields wf = WeekFields.ISO;
+        int wa = a.get(wf.weekOfWeekBasedYear());
+        int ya = a.get(wf.weekBasedYear());
+        int wb = b.get(wf.weekOfWeekBasedYear());
+        int yb = b.get(wf.weekBasedYear());
+        return wa == wb && ya == yb;
+    }
 }
