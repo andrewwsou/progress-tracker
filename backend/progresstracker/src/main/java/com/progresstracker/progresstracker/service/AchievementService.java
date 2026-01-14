@@ -42,18 +42,20 @@ public class AchievementService {
 
     @Transactional
     public void ensureDefaultAchievements() {
-        upsert(FIRST_COMPLETION, "First Step", "Complete a habit for the first time.");
-        upsert(STREAK_7, "On a Roll", "Reach a 7-day streak on any habit.");
-        upsert(XP_100, "Level Up", "Earn 100 total XP across all habits.");
+        upsert(FIRST_COMPLETION, "First Step", "Complete a habit for the first time.", 1, "COMPLETION");
+        upsert(STREAK_7, "On a Roll", "Reach a 7-day streak on any habit.", 7, "STREAK");
+        upsert(XP_100, "Level Up", "Earn 100 total XP across all habits.", 100, "XP");
     }
 
-    private void upsert(String code, String name, String description) {
+    private void upsert(String code, String name, String description, int threshold, String type) {
         Achievement a = achievementRepository.findByCode(code).orElse(null);
         if (a == null) {
-            achievementRepository.save(new Achievement(code, name, description));
+            achievementRepository.save(new Achievement(code, name, description, threshold, type));
             return;
         }
+
         boolean changed = false;
+
         if (!name.equals(a.getName())) {
             a.setName(name);
             changed = true;
@@ -62,6 +64,15 @@ public class AchievementService {
             a.setDescription(description);
             changed = true;
         }
+        if (a.getThreshold() == null || a.getThreshold() != threshold) {
+            a.setThreshold(threshold);
+            changed = true;
+        }
+        if (a.getType() == null || !type.equals(a.getType())) {
+            a.setType(type);
+            changed = true;
+        }
+
         if (changed) {
             achievementRepository.save(a);
         }
@@ -78,17 +89,19 @@ public class AchievementService {
             long totalCompletions = 0;
             for (Habit h : habitRepository.findByUser(user)) {
                 LocalDate today = LocalDate.now();
-                totalCompletions += habitEntryRepository.countByHabitAndCompletedDateBetween(h, LocalDate.of(1970, 1, 1), today);
+                totalCompletions += habitEntryRepository.countByHabitAndCompletedDateBetween(
+                        h, LocalDate.of(1970, 1, 1), today
+                );
                 if (totalCompletions > 0) break;
             }
-            if (totalCompletions > 0) {
+            if (totalCompletions >= first.getThreshold()) {
                 newlyUnlocked.add(unlock(user, first));
             }
         }
 
         Achievement streak7 = achievementRepository.findByCode(STREAK_7).orElseThrow();
         if (!userAchievementRepository.existsByUserAndAchievement(user, streak7)) {
-            if (justUpdatedHabit.getCurrentStreak() >= 7) {
+            if (justUpdatedHabit.getCurrentStreak() >= streak7.getThreshold()) {
                 newlyUnlocked.add(unlock(user, streak7));
             }
         }
@@ -96,7 +109,7 @@ public class AchievementService {
         Achievement xp100 = achievementRepository.findByCode(XP_100).orElseThrow();
         if (!userAchievementRepository.existsByUserAndAchievement(user, xp100)) {
             long totalXp = habitRepository.sumXpByUser(user);
-            if (totalXp >= 100) {
+            if (totalXp >= xp100.getThreshold()) {
                 newlyUnlocked.add(unlock(user, xp100));
             }
         }

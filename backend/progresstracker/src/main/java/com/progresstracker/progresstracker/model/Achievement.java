@@ -22,13 +22,21 @@ public class Achievement {
     @Column(nullable = false)
     private String description;
 
+    @Column(nullable = false)
+    private Integer threshold;
+
+    @Column(name = "type", nullable = false)
+    private String type;
+
     public Achievement() {
     }
 
-    public Achievement(String code, String name, String description) {
+    public Achievement(String code, String name, String description, Integer threshold, String type) {
         this.code = code;
         this.name = name;
         this.description = description;
+        this.threshold = threshold;
+        this.type = type;
     }
 
     public Long getId() {
@@ -61,5 +69,21 @@ public class Achievement {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public Integer getThreshold() {
+        return threshold;
+    }
+
+    public void setThreshold(Integer threshold) {
+        this.threshold = threshold;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public void setType(String type) {
+        this.type = type;
     }
 }
