@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: progress-worker
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/progresstracker
+    username: ptrack
+    password: ptrack
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+queue:
+  enabled: true
+  awsRegion: us-west-2
+  sqsUrl: ""
+
+worker:
+  enabled: true
+  waitTimeSeconds: 20
+  maxMessages: 10
+  visibilityTimeoutSeconds: 60
