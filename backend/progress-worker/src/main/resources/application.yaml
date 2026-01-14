@@ -13,7 +13,7 @@ spring:
     show-sql: false
 
 queue:
-  enabled: true
+  enabled: false
   awsRegion: us-west-2
   sqsUrl: ""
 
