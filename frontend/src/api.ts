@@ -6,12 +6,28 @@ export type Habit = {
   description: string;
   frequency: string;
 
+  goalTargetCount?: number;
+  goalPeriod?: string;
+
+  progressCount?: number;
+  progressTargetCount?: number;
+
   xpTotal?: number;
   currentStreak?: number;
   longestStreak?: number;
   lastCompletedDate?: string;
 };
 
+export type Achievement = {
+  id: number;
+  achievement: {
+    id: number;
+    code: string;
+    name: string;
+    description: string;
+  };
+  unlockedAt: string;
+};
 
 export type AuthResponse = {
   token: string;
@@ -25,7 +41,6 @@ function authHeaders(): HeadersInit {
     Authorization: `Bearer ${token}`,
   };
 }
-
 
 export async function registerUser(email: string, password: string): Promise<string> {
   const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
@@ -56,9 +71,8 @@ export async function loginUser(email: string, password: string): Promise<string
   }
 
   const data: AuthResponse = await res.json();
-  return data.token; 
+  return data.token;
 }
- 
 
 export async function fetchHabits(): Promise<Habit[]> {
   const res = await fetch(`${BACKEND_URL}/api/habits`, {
@@ -74,6 +88,8 @@ export async function createHabit(payload: {
   name: string;
   description: string;
   frequency: string;
+  goalTargetCount?: number;
+  goalPeriod?: string;
 }) {
   const res = await fetch(`${BACKEND_URL}/api/habits`, {
     method: "POST",
@@ -88,7 +104,7 @@ export async function createHabit(payload: {
 
 export async function updateHabit(
   id: number,
-  payload: { name: string; description: string; frequency: string }
+  payload: { name: string; description: string; frequency: string; goalTargetCount?: number; goalPeriod?: string }
 ) {
   const res = await fetch(`${BACKEND_URL}/api/habits/${id}`, {
     method: "PUT",
@@ -99,6 +115,16 @@ export async function updateHabit(
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error("Failed to update habit");
+}
+
+export async function fetchAchievements(): Promise<Achievement[]> {
+  const res = await fetch(`${BACKEND_URL}/api/achievements`, {
+    headers: {
+      ...authHeaders(),
+    },
+  });
+  if (!res.ok) throw new Error("Failed to fetch achievements");
+  return res.json();
 }
 
 export async function deleteHabit(id: number) {
