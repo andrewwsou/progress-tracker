@@ -124,7 +124,8 @@ function App() {
     setGoalPeriod(h.goalPeriod ?? (h.frequency === "WEEKLY" ? "WEEKLY" : "DAILY"));
   }
 
-  const unlockedNames = useMemo(() => achievements.map((a) => a.achievement.name), [achievements]);
+  const unlockedNames = useMemo(() => achievements.map((a) => a.name), [achievements]);
+
 
   if (!token) {
     return (
@@ -169,7 +170,7 @@ function App() {
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             {achievements.map((a) => (
               <span
-                key={a.id}
+                key={a.userAchievementId}
                 style={{
                   border: "1px solid #ddd",
                   borderRadius: 999,
@@ -177,9 +178,9 @@ function App() {
                   fontSize: 12,
                   background: "#fafafa",
                 }}
-                title={a.achievement.description}
+                title={a.description}
               >
-                {a.achievement.name}
+                {a.name}
               </span>
             ))}
           </div>

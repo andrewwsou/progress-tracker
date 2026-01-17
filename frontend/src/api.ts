@@ -19,15 +19,16 @@ export type Habit = {
 };
 
 export type Achievement = {
-  id: number;
-  achievement: {
-    id: number;
-    code: string;
-    name: string;
-    description: string;
-  };
+  userAchievementId: number;
+  achievementId: number;
+  code: string;
+  name: string;
+  description: string;
+  threshold: number | null;
+  type: string | null;
   unlockedAt: string;
 };
+
 
 export type AuthResponse = {
   token: string;
