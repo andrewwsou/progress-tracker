@@ -30,7 +30,7 @@ public class HabitController {
     private final HabitEntryRepository habitEntryRepository;
     private final CompletionQueueService completionQueueService;
 
-    @Value("${queue.enabled:false}")
+    @Value("${queue.enabled:true}")
     private boolean queueEnabled;
 
     public HabitController(HabitRepository habitRepository,
@@ -130,6 +130,10 @@ public class HabitController {
         }
 
         Habit updated;
+        System.out.println("DEBUG queueEnabled=" + queueEnabled);
+        System.out.println("DEBUG queueEnabled=" + queueEnabled);
+        System.out.println("DEBUG QUEUE_SQS_URL env=" + System.getenv("QUEUE_SQS_URL"));
+
         if (queueEnabled) {
             updated = habitProgressService.recordCompletionOnly(habit);
             completionQueueService.enqueueCompletion(user.getId(), habit.getId(), LocalDate.now());

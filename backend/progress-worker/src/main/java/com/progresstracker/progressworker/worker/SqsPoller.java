@@ -79,7 +79,8 @@ public class SqsPoller {
 
         running.set(true);
         loopThread = new Thread(this::pollLoop, "sqs-poller");
-        loopThread.setDaemon(true);
+        loopThread.setDaemon(false);
+
         loopThread.start();
         log.info("SQS poller started");
     }
@@ -109,22 +110,48 @@ public class SqsPoller {
         try {
             JsonNode node = objectMapper.readTree(message.body());
 
-            long userId = node.get("userId").asLong();
-            long habitId = node.get("habitId").asLong();
-            LocalDate date = LocalDate.parse(node.get("date").asText());
+            // Use path() so missing fields don't NPE
+            JsonNode userIdNode = node.path("userId");
+            JsonNode habitIdNode = node.path("habitId");
+
+            // Accept either "date" or "completedDate"
+            String dateStr = node.hasNonNull("date")
+                    ? node.get("date").asText()
+                    : node.path("completedDate").asText(null);
+
+            // Validate
+            if (userIdNode.isMissingNode() || habitIdNode.isMissingNode() || dateStr == null || dateStr.isBlank()) {
+                log.error("Invalid message schema (deleting message): {}", message.body());
+                delete(message); // dev-friendly: don't poison the queue
+                return;
+            }
+
+            long userId = userIdNode.asLong();
+            long habitId = habitIdNode.asLong();
+            LocalDate date = LocalDate.parse(dateStr);
 
             completionProcessor.process(userId, habitId, date);
 
+            delete(message);
+            log.info("Processed completion userId={} habitId={} date={}", userId, habitId, date);
+
+        } catch (Exception e) {
+            log.error("Failed processing message (deleting message to avoid retry poison): {}", message.body(), e);
+            delete(message); // dev-friendly; for prod you'd DLQ instead
+        }
+    }
+
+    private void delete(Message message) {
+        try {
             sqsClient.deleteMessage(DeleteMessageRequest.builder()
                     .queueUrl(sqsUrl)
                     .receiptHandle(message.receiptHandle())
                     .build());
-
-            log.info("Processed completion userId={} habitId={} date={}", userId, habitId, date);
-        } catch (Exception e) {
-            log.error("Failed processing message (will retry via SQS): {}", message.body(), e);
+        } catch (Exception ex) {
+            log.error("Failed deleting message", ex);
         }
     }
+
 
     private void sleep(long ms) {
         try { Thread.sleep(ms); } catch (InterruptedException ignored) {}

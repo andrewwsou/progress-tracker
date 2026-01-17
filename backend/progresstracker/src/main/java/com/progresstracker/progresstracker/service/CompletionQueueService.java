@@ -7,6 +7,11 @@ import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import jakarta.annotation.PostConstruct;
+
+
 
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -14,16 +19,24 @@ import java.util.Map;
 
 @Service
 public class CompletionQueueService {
+    private static final Logger log = LoggerFactory.getLogger(CompletionQueueService.class);
+
 
     private final ObjectMapper objectMapper;
 
-    @Value("${queue.enabled:false}")
+    @Value("${queue.enabled:true}")
     private boolean enabled;
 
     @Value("${queue.sqsUrl:}")
     private String sqsUrl;
 
-    @Value("${queue.awsRegion:us-west-2}")
+    @PostConstruct
+    public void debugQueue() {
+        System.out.println("DEBUG(queue.sqsUrl)=" + sqsUrl);
+    }
+
+
+    @Value("${queue.awsRegion:us-west-1}")
     private String awsRegion;
 
     private volatile SqsClient sqsClient;
@@ -34,6 +47,7 @@ public class CompletionQueueService {
 
     public void enqueueCompletion(Long userId, Long habitId, LocalDate date) {
         if (!enabled) {
+            log.info("SQS enqueue skipped (queue.enabled=false) userId={} habitId={} date={}", userId, habitId, date);
             return;
         }
         if (sqsUrl == null || sqsUrl.isBlank()) {
@@ -52,11 +66,14 @@ public class CompletionQueueService {
             throw new IllegalStateException("Failed to serialize SQS payload", e);
         }
 
+        log.info("ENQUEUE completion userId={} habitId={} date={} queueUrl={}", userId, habitId, date, sqsUrl);
+
         getClient().sendMessage(SendMessageRequest.builder()
                 .queueUrl(sqsUrl)
                 .messageBody(body)
                 .build());
     }
+
 
     private SqsClient getClient() {
         SqsClient c = this.sqsClient;

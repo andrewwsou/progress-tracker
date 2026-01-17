@@ -10,7 +10,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
         format_sql: true
@@ -19,6 +19,7 @@ server:
   port: 8080
 
 queue:
-  enabled: false
-  awsRegion: us-west-2
-  sqsUrl: ""
+  enabled: true
+  awsRegion: us-west-1
+  sqsUrl: "https://sqs.us-west-1.amazonaws.com/648093549515/progresstracker-completions"
+

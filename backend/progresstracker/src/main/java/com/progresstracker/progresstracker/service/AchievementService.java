@@ -10,6 +10,8 @@ import com.progresstracker.progresstracker.repository.HabitRepository;
 import com.progresstracker.progresstracker.repository.UserAchievementRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.progresstracker.progresstracker.dto.UserAchievementDto;
+
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -122,7 +124,20 @@ public class AchievementService {
         return userAchievementRepository.save(ua);
     }
 
-    public List<UserAchievement> getUnlockedFor(User user) {
-        return userAchievementRepository.findByUserOrderByUnlockedAtDesc(user);
+    public List<UserAchievementDto> getUnlockedFor(User user) {
+        return userAchievementRepository.findByUserWithAchievementOrderByUnlockedAtDesc(user)
+                .stream()
+                .map(ua -> new UserAchievementDto(
+                        ua.getId(),                         // userAchievementId
+                        ua.getAchievement().getId(),         // achievementId
+                        ua.getAchievement().getCode(),       // code
+                        ua.getAchievement().getName(),       // name
+                        ua.getAchievement().getDescription(),// description
+                        ua.getAchievement().getThreshold(),  // threshold
+                        ua.getAchievement().getType(),       // type
+                        ua.getUnlockedAt()                   // unlockedAt
+                ))
+                .toList();
     }
+
 }
