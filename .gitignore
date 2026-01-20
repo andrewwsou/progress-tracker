@@ -31,3 +31,12 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# secrets / env files 
+backend/progress-worker/env
+backend/progresstracker/env
+backend/progress-worker/.env
+backend/progresstracker/.env
+*.env
+.env
+.env.*
