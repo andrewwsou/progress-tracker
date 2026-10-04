@@ -9,12 +9,23 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 public interface HabitRepository extends JpaRepository<Habit, Long> {
     List<Habit> findByUser(User user);
 
     @Query("select coalesce(sum(h.xpTotal), 0) from Habit h where h.user = :user")
     long sumXpByUser(@Param("user") User user);
+
+    /**
+     * Locks the habit's row until the current transaction ends. FOR NO KEY UPDATE blocks anything
+     * else that writes the row (the nightly reset, an edit, a delete) but not inserts of rows that
+     * only reference it.
+     *
+     * @return the id, or empty if the habit no longer exists
+     */
+    @Query(value = "select id from habit where id = :id for no key update", nativeQuery = true)
+    Optional<Long> lockById(@Param("id") Long id);
 
     /**
      * Sets the current streak to zero for every habit whose streak has lapsed: a daily habit last

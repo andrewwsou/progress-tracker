@@ -1,5 +1,8 @@
 package com.progresstracker.progresstracker.service;
 
+import jakarta.persistence.EntityManager;
+import org.mockito.InOrder;
+import org.springframework.web.server.ResponseStatusException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.progresstracker.progresstracker.outbox.OutboxEvent;
@@ -20,6 +23,7 @@ import java.time.LocalDate;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -38,13 +42,20 @@ class HabitProgressServiceTest {
     @Mock
     private OutboxEventRepository outboxEventRepository;
 
+    @Mock
+    private EntityManager entityManager;
+
     private HabitProgressService service;
 
     @BeforeEach
     void setUp() {
         service = new HabitProgressService(
-                habitRepository, habitEntryRepository, achievementService, outboxEventRepository, new ObjectMapper());
+                habitRepository, habitEntryRepository, achievementService, outboxEventRepository, new ObjectMapper(),
+                entityManager);
         lenient().when(habitRepository.save(any(Habit.class))).thenAnswer(inv -> inv.getArgument(0));
+        // The habit exists and is managed: completeToday locks its row and refreshes it in place.
+        lenient().when(habitRepository.lockById(any())).thenAnswer(inv -> Optional.of(inv.getArgument(0, Long.class)));
+        lenient().when(entityManager.contains(any())).thenReturn(true);
     }
 
     private Habit dailyHabit(int currentStreak, int longestStreak, LocalDate lastCompleted) {
@@ -94,6 +105,74 @@ class HabitProgressServiceTest {
 
         assertThat(result.getCurrentStreak()).isEqualTo(1);
         assertThat(result.getLongestStreak()).isEqualTo(9); // longest streak is never lowered
+    }
+
+    @Test
+    void completeToday_locksAndReReadsTheHabitBeforeComputingTheStreak() {
+        // The caller's copy: streak 1, last completed two days ago. Before the lock was taken, the
+        // nightly reset zeroed that lapsed streak, so the row now says 0.
+        Habit habit = dailyHabit(1, 1, LocalDate.now().minusDays(2));
+        doAnswer(inv -> {
+            habit.setCurrentStreak(0);
+            return null;
+        }).when(entityManager).refresh(habit);
+        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any())).thenReturn(Optional.empty());
+
+        Habit result = service.completeToday(habit);
+
+        assertThat(result.getCurrentStreak()).isEqualTo(1);
+        assertThat(result.getLastCompletedDate()).isEqualTo(LocalDate.now());
+        InOrder order = inOrder(habitRepository, entityManager);
+        order.verify(habitRepository).lockById(42L);
+        order.verify(entityManager).refresh(habit);
+        order.verify(habitRepository).save(habit);
+    }
+
+    @Test
+    void completeToday_aCompletionThatCommittedMeanwhileIsSeenAfterTheLock() {
+        // The caller's copy: streak 4, last completed yesterday. Another request completed the
+        // habit today and committed while this one waited for the lock.
+        Habit habit = dailyHabit(4, 4, LocalDate.now().minusDays(1));
+        doAnswer(inv -> {
+            habit.setCurrentStreak(5);
+            habit.setLongestStreak(5);
+            habit.setLastCompletedDate(LocalDate.now());
+            return null;
+        }).when(entityManager).refresh(habit);
+        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any()))
+                .thenReturn(Optional.of(new HabitEntry(habit, LocalDate.now(), 18)));
+
+        Habit result = service.completeToday(habit);
+
+        assertThat(result.getCurrentStreak()).isEqualTo(5);
+        verify(habitRepository, never()).save(any());
+        verifyNoInteractions(achievementService);
+    }
+
+    @Test
+    void completeToday_aHabitNotInThePersistenceContextIsLoadedFresh() {
+        Habit detached = dailyHabit(4, 4, LocalDate.now().minusDays(1));
+        Habit current = dailyHabit(4, 4, LocalDate.now().minusDays(1));
+        when(entityManager.contains(detached)).thenReturn(false);
+        when(entityManager.find(Habit.class, 42L)).thenReturn(current);
+        when(habitEntryRepository.findByHabitAndCompletedDate(eq(current), any())).thenReturn(Optional.empty());
+
+        Habit result = service.completeToday(detached);
+
+        assertThat(result).isSameAs(current);
+        assertThat(result.getCurrentStreak()).isEqualTo(5);
+        verify(entityManager, never()).refresh(any());
+    }
+
+    @Test
+    void completeToday_aHabitDeletedMeanwhileIsNotFound() {
+        Habit habit = dailyHabit(0, 0, null);
+        when(habitRepository.lockById(42L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.completeToday(habit))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("Habit not found");
+        verifyNoInteractions(habitEntryRepository, achievementService);
     }
 
     @Test

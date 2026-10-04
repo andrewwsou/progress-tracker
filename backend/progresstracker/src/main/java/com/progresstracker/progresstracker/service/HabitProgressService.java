@@ -10,8 +10,11 @@ import com.progresstracker.progresstracker.outbox.OutboxEvent;
 import com.progresstracker.progresstracker.outbox.OutboxEventRepository;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
+import jakarta.persistence.EntityManager;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -28,23 +31,27 @@ public class HabitProgressService {
     private final AchievementService achievementService;
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
+    private final EntityManager entityManager;
 
     public HabitProgressService(
             HabitRepository habitRepository,
             HabitEntryRepository habitEntryRepository,
             AchievementService achievementService,
             OutboxEventRepository outboxEventRepository,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            EntityManager entityManager
     ) {
         this.habitRepository = habitRepository;
         this.habitEntryRepository = habitEntryRepository;
         this.achievementService = achievementService;
         this.outboxEventRepository = outboxEventRepository;
         this.objectMapper = objectMapper;
+        this.entityManager = entityManager;
     }
 
     @Transactional
     public Habit completeToday(Habit habit) {
+        habit = lockAndReload(habit);
         LocalDate today = LocalDate.now();
 
         if (alreadyCompletedForPeriod(habit, today)) {
@@ -77,6 +84,24 @@ public class HabitProgressService {
         }
 
         return saved;
+    }
+
+    /**
+     * The habit passed in was read before this transaction started, and the nightly streak reset
+     * may have changed it since. Lock its row and read it again, so the new streak is computed from
+     * the row as it is now: a reset that already ran is seen, and one that runs now waits for this
+     * completion and then finds the streak current. Reading it again also resets what the entity is
+     * compared with when it is saved, so the new streak is written even when it equals the old copy's.
+     */
+    private Habit lockAndReload(Habit habit) {
+        if (habitRepository.lockById(habit.getId()).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Habit not found"); // deleted meanwhile
+        }
+        if (entityManager.contains(habit)) {
+            entityManager.refresh(habit);
+            return habit;
+        }
+        return entityManager.find(Habit.class, habit.getId());
     }
 
     @Transactional

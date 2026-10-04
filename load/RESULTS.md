@@ -23,6 +23,12 @@ No request failed at either level, and the unique constraint on `(habit_id, comp
 let exactly one through. In async mode there was also exactly one outbox event, so the worker
 was asked to reward the habit once, not 8,000 times.
 
+Re-run at 200 in flight after the sync path started locking the habit's row for each completion
+(the streak-reset fix): 8,000 of 8,000 succeeded in both modes, one completion and one reward;
+sync 716 requests/s, p50 203 ms, p95 668 ms, p99 1,182 ms. The lock makes completions of the same
+habit wait their turn instead of racing to the unique constraint, and on this machine that is
+within run-to-run noise.
+
 Throughput stays near 700 to 800 requests per second while latency grows with the number in
 flight. Throughput is at its ceiling on this machine (the API has 10 database connections, and
 its CPUs are shared with the load generator), so extra concurrency only adds waiting.

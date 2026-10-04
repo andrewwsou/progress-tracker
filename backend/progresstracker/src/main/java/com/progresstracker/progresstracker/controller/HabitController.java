@@ -122,7 +122,8 @@ public class HabitController {
             // Two concurrent requests can both pass the "already completed?" check before
             // either writes its row; the loser hits the (habit_id, completed_date) unique
             // constraint. That's a lost race, not a real error - the winner's write already
-            // recorded the completion, so just return the current state.
+            // recorded the completion, so just return the current state. (In sync mode the
+            // habit's row lock mostly makes them take turns instead; async mode still races.)
             updated = habitRepository.findById(id)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Habit not found"));
 

@@ -107,7 +107,9 @@ queue only promises at-least-once, unordered delivery.
   `UPDATE` computed from the row as it is at that moment, so the nightly streak reset running
   mid-reward cannot leave a just-completed habit with a zero streak
   ([`StreakResetRaceIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakResetRaceIT.java)
-  forces that interleaving; the earlier read-modify-write failed it). Achievement unlocks are inserts that do nothing
+  forces that interleaving; the earlier read-modify-write failed it). The synchronous path closes
+  the same race the other way: it locks the habit's row and reads it again inside the transaction
+  before computing the streak ([`CompletionDuringStreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/CompletionDuringStreakResetIT.java)). Achievement unlocks are inserts that do nothing
   on conflict, so racing unlocks cannot fail.
 - **Order does not matter.** The current streak only moves forward and the 7-day-streak
   achievement is judged on the longest streak, so an older event arriving late (a retry, or a
@@ -242,6 +244,7 @@ PostgreSQL and an SQS-compatible broker in Docker and run the actual services ag
 | [`StreakQueryIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakQueryIT.java) | The single-query streak calculation gives the same answer as counting back one day (or week) at a time, on 120 random completion histories, including across a year boundary. |
 | [`AchievementUnlockIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/AchievementUnlockIT.java) | The XP achievement unlocks when a user's total across habits reaches 100, the streak achievement on the seventh day in a row, and each only once. |
 | [`StreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/StreakResetIT.java) | The nightly streak reset, a single UPDATE, zeroes exactly the streaks that have lapsed and changes nothing else. |
+| [`CompletionDuringStreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/CompletionDuringStreakResetIT.java) | In sync mode, the nightly reset committing in the middle of a completion cannot leave the habit with a zero streak. Forced with a second connection; the previous code failed it. |
 | [`WeeklySummaryIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/WeeklySummaryIT.java) | The weekly job needs the internal token, asks once per active user (a repeated run adds nothing), and users read only their own newest finished summary. |
 | [`WeeklySummaryJobIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/WeeklySummaryJobIT.java) | The worker against WireMock standing in for the Claude API: a summary is written and its cost recorded; timeouts and server errors are retried and then fall back to the template; refusals, invented habits, and invented numbers fall back too; the daily token budget stops calls; expired claims are taken over; a stale worker cannot overwrite a newer claim; two workers write each summary once. |
 
