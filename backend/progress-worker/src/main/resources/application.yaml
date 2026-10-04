@@ -8,8 +8,18 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/progresstracker}
     username: ${DB_USERNAME:ptrack}
     password: ${DB_PASSWORD:ptrack}
+    hikari:
+      # Each message being processed holds one connection; worker.concurrency must leave two spare.
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+
+  lifecycle:
+    # Shutdown: the queue poller drains first (worker.shutdownTimeoutSeconds), then the summary
+    # job gets this long to finish its current summary. Together they fit in Compose's 35 s grace.
+    timeout-per-shutdown-phase: 5s
 
   jpa:
+    # No web requests read entities, so there is no session to keep open for them.
+    open-in-view: false
     hibernate:
       ddl-auto: update
     show-sql: false
@@ -32,6 +42,36 @@ worker:
   visibilityTimeoutSeconds: 60
   # Deadline for applying one reward. Bounds how long a transaction waits on a lock.
   processTimeoutSeconds: 5
+  # Messages processed at the same time. Rewards for one user still apply one at a time (a row
+  # lock), so this helps when events are spread over many users.
+  concurrency: ${WORKER_CONCURRENCY:8}
+  # On shutdown: stop polling, then give the messages in flight this long to finish.
+  shutdownTimeoutSeconds: 25
+  # Health turns DOWN if the poll loop has died or has not polled for this long. Above the worst
+  # normal gap: one bounded SQS call (30 s) plus the longest backoff (30 s) plus a busy worker.
+  pollStaleAfterSeconds: 120
+
+# Health checks and metrics. Only the worker's own network can reach this port; Compose does
+# not publish it, and in AWS it belongs behind a private security group.
+server:
+  port: 8081
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+      group:
+        # Liveness fails if the poll loop dies, so an orchestrator restarts the worker.
+        liveness:
+          include: livenessState,sqsPoller
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 # Weekly summaries: the API asks for them, this worker writes them (see README "Weekly summaries").
 summary:

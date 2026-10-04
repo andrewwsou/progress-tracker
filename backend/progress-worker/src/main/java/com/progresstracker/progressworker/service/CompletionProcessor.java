@@ -29,7 +29,9 @@ import java.util.UUID;
  *   <li>a row lock on the user makes reward transactions for one user run one at a time;</li>
  *   <li>under that lock, a completion that already has XP is never rewarded again. This is what
  *       makes one completion earn one reward, even if it arrives as two different events;</li>
- *   <li>the current streak only moves forward, so an old event arriving late cannot rewind it;</li>
+ *   <li>the habit's totals are updated in one statement from the row as it is now, and the current
+ *       streak only moves forward, so neither an old event arriving late nor the nightly streak
+ *       reset running at the same moment can leave it wrong;</li>
  *   <li>any failure rolls everything back, including the event id, and the queue redelivers.</li>
  * </ol>
  */
@@ -113,17 +115,10 @@ public class CompletionProcessor {
         entry.setXpEarned(xpEarned);
         habitEntryRepository.save(entry);
 
-        // Events can arrive out of order (retries, redrives from the dead-letter queue).
-        // Only the most recent day decides the current streak; an older day never overwrites it.
-        LocalDate lastCompleted = habit.getLastCompletedDate();
-        if (lastCompleted == null || !date.isBefore(lastCompleted)) {
-            habit.setCurrentStreak(streak);
-            habit.setLastCompletedDate(date);
-        }
-        habit.setLongestStreak(Math.max(habit.getLongestStreak(), streak));
-        habit.setXpTotal(habit.getXpTotal() + xpEarned);
-
-        Habit saved = habitRepository.save(habit);
+        // One statement against the current row (see applyReward): events can arrive out of
+        // order, and the nightly reset can change the streak after the habit was read above.
+        habitRepository.applyReward(habitId, date, streak, xpEarned);
+        Habit saved = habitRepository.findById(habitId).orElseThrow(); // the updated row
 
         achievementService.evaluateAndUnlock(user, saved);
         emailService.queueCompletionEmail(user, saved.getName());

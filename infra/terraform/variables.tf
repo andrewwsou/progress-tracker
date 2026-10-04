@@ -32,3 +32,9 @@ variable "weekly_summary_schedule" {
   type        = string
   default     = "cron(0 13 ? * MON *)" # 13:00 UTC every Monday
 }
+
+variable "alarm_topic_arn" {
+  description = "SNS topic to notify when a queue alarm fires. Blank: the alarms still show in CloudWatch but notify no one."
+  type        = string
+  default     = ""
+}

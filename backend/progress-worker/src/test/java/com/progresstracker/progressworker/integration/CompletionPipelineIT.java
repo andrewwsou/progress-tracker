@@ -1,8 +1,15 @@
 package com.progresstracker.progressworker.integration;
 
 import com.progresstracker.progressworker.summary.AiSummaryWriter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.health.HealthEndpoint;
+import org.springframework.boot.actuate.health.Status;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -27,6 +34,15 @@ class CompletionPipelineIT extends WorkerIntegrationTestBase {
 
     @Autowired
     private AiSummaryWriter aiSummaryWriter;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
+
+    @Autowired
+    private HealthEndpoint healthEndpoint;
 
     @Test
     void testsCanNeverCallTheRealClaudeApi() {
@@ -214,7 +230,69 @@ class CompletionPipelineIT extends WorkerIntegrationTestBase {
         assertThat(entryCount(habitId)).isZero();
     }
 
+    @Test
+    void aUserWhoseRewardIsStuckDoesNotHoldUpOtherUsers() throws Exception {
+        LocalDate today = LocalDate.now();
+        long stuckUser = insertUser();
+        long stuckHabit = insertHabit(stuckUser);
+        insertEntry(stuckHabit, today, 0);
+        long otherUser = insertUser();
+        long otherHabit = insertHabit(otherUser);
+        insertEntry(otherHabit, today, 0);
+
+        try (Connection holder = dataSource.getConnection()) {
+            // Another transaction holds the first user's row, so that user's reward has to wait.
+            holder.setAutoCommit(false);
+            try (PreparedStatement lock = holder.prepareStatement("select id from app_user where id = ? for update")) {
+                lock.setLong(1, stuckUser);
+                lock.executeQuery();
+            }
+            LocalSqs.send(QUEUE_URL, event(stuckUser, stuckHabit, today));
+            await().atMost(TIMEOUT).until(() -> aTransactionIsWaitingOn("app_user"));
+
+            LocalSqs.send(QUEUE_URL, event(otherUser, otherHabit, today));
+
+            // Rewarded on another worker thread while the first is still waiting (its deadline is 5 s).
+            await().atMost(Duration.ofSeconds(4)).untilAsserted(() -> assertThat(xpTotal(otherHabit)).isEqualTo(10));
+            assertThat(xpTotal(stuckHabit)).isZero();
+            holder.rollback();
+        }
+
+        // Once the row is free, the first reward goes through too (on this attempt or a redelivery).
+        await().atMost(TIMEOUT).untilAsserted(() -> assertThat(xpTotal(stuckHabit)).isEqualTo(10));
+    }
+
+    @Test
+    void healthAndMetricsReportTheWorker() {
+        double appliedBefore = events("applied");
+        long userId = insertUser();
+        long habitId = insertHabit(userId);
+        insertEntry(habitId, LocalDate.now(), 0);
+
+        LocalSqs.send(QUEUE_URL, event(userId, habitId, LocalDate.now()));
+
+        // The counters are updated just after the reward commits, so wait for them, not the reward.
+        await().atMost(TIMEOUT).untilAsserted(() -> {
+            assertThat(events("applied")).isGreaterThanOrEqualTo(appliedBefore + 1);
+            assertThat(meterRegistry.get("worker.event.processing").timer().count()).isPositive();
+            assertThat(meterRegistry.get("worker.event.lag").timer().count()).isPositive();
+        });
+        assertThat(xpTotal(habitId)).isEqualTo(10);
+        assertThat(healthEndpoint.healthForPath("sqsPoller").getStatus()).isEqualTo(Status.UP);
+        assertThat(healthEndpoint.healthForPath("liveness").getStatus()).isEqualTo(Status.UP);
+    }
+
     // --- helpers ---------------------------------------------------------------------------
+
+    private double events(String outcome) {
+        return meterRegistry.get("worker.events").tag("outcome", outcome).counter().count();
+    }
+
+    private boolean aTransactionIsWaitingOn(String table) {
+        return jdbc.queryForObject(
+                "select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query ilike ?",
+                Integer.class, "%" + table + "%") > 0;
+    }
 
     /** A message as the API's outbox writes it. Each call is a new event with its own id. */
     private static String event(long userId, long habitId, LocalDate date) {

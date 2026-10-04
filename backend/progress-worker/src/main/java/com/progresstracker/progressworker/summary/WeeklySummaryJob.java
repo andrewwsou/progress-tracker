@@ -4,6 +4,8 @@ import com.progresstracker.progressworker.model.WeeklySummary;
 import com.progresstracker.progressworker.service.EmailService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +25,7 @@ public class WeeklySummaryJob {
     private final SummaryGenerator generator;
     private final EmailService emailService;
     private final SummaryProperties.Job config;
+    private volatile boolean shuttingDown;
 
     public WeeklySummaryJob(WeeklySummaryStore store,
                             WeeklyStatsReader statsReader,
@@ -44,10 +47,16 @@ public class WeeklySummaryJob {
             int claimed;
             do {
                 claimed = runOnce();
-            } while (claimed == config.batchSize() && !Thread.currentThread().isInterrupted());
+            } while (claimed == config.batchSize() && !shuttingDown && !Thread.currentThread().isInterrupted());
         } catch (RuntimeException e) {
             log.error("Weekly summary run failed; the next run will try again", e);
         }
+    }
+
+    /** Stops claiming new batches once the application starts shutting down. */
+    @EventListener(ContextClosedEvent.class)
+    void onShutdown() {
+        shuttingDown = true;
     }
 
     /** Claims a batch of waiting summaries and writes each one. Returns how many were claimed. */

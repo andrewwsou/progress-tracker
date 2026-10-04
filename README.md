@@ -27,7 +27,8 @@ computation.
                  ┌─────────────┐        5. one transaction: record  │
                  │   Worker    │           the event id, lock the   │
                  │  (Spring    │           user, compute streak/XP/ │
-                 │   Boot)     │           achievements ────────────┘
+                 │   Boot,     │           achievements ────────────┘
+                 │   8 threads)│
                  └─────────────┘────────▶ 6. queue completion email (SES/log)
 ```
 
@@ -40,7 +41,7 @@ AWS-free mode** for local development (see below).
 | Service | Path | Stack |
 |---|---|---|
 | API | `backend/progresstracker` | Spring Boot 3.5 (Java 17), Spring Security + JWT, JPA/Hibernate, PostgreSQL |
-| Worker | `backend/progress-worker` | Spring Boot 3.5 (Java 17), JPA/Hibernate, PostgreSQL, AWS SQS long-polling |
+| Worker | `backend/progress-worker` | Spring Boot 3.5 (Java 17), JPA/Hibernate, PostgreSQL, AWS SQS long-polling, Actuator + Micrometer/Prometheus (`:8081`) |
 | Frontend | `frontend` | React 19 + Vite |
 
 ## Endpoints (API)
@@ -102,14 +103,35 @@ queue only promises at-least-once, unordered delivery.
 - **No lost updates.** The user lock makes reward transactions for one user run one at a time,
   so two workers cannot overwrite each other's totals. The API and the worker write different
   columns of the same habit row, and each updates only the columns it changed, so an edit
-  cannot erase a reward or the other way round. Achievement unlocks are inserts that do nothing
+  cannot erase a reward or the other way round. The worker writes the reward columns in one
+  `UPDATE` computed from the row as it is at that moment, so the nightly streak reset running
+  mid-reward cannot leave a just-completed habit with a zero streak
+  ([`StreakResetRaceIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakResetRaceIT.java)
+  forces that interleaving; the earlier read-modify-write failed it). Achievement unlocks are inserts that do nothing
   on conflict, so racing unlocks cannot fail.
 - **Order does not matter.** The current streak only moves forward and the 7-day-streak
   achievement is judged on the longest streak, so an older event arriving late (a retry, or a
   redrive from the dead-letter queue) gives the same result as arriving on time.
 - The poller distinguishes **poison messages** (malformed payload — deleted immediately, retrying
   can't help) from **transient processing failures** (left on the queue so SQS redelivers after
-  the visibility timeout; safe because processing is idempotent).
+  the visibility timeout; safe because processing is idempotent). A message that fails 5 times
+  moves to the **dead-letter queue**, and a CloudWatch alarm fires as soon as one is there.
+
+**The worker under load and in operation.**
+- **Bounded concurrency with backpressure.** Messages are processed by a fixed pool of 8 threads
+  (`WORKER_CONCURRENCY`). The poller only asks SQS for as many messages as there are idle threads,
+  so a received message never waits in memory while its visibility timeout runs out. One user's
+  rewards still apply one at a time (the row lock), so a slow or stuck user no longer holds up
+  everyone else. Startup fails if the threads could exhaust the database pool (`DB_POOL_SIZE` − 2).
+- **Graceful shutdown.** On SIGTERM the worker stops polling, lets the messages in flight finish
+  (up to 25 s), and only then closes its queue client and database pool. Anything still running
+  at the deadline is simply redelivered. A failing queue is retried with exponential backoff.
+- **Health and metrics.** `/actuator/health` (Docker `HEALTHCHECK`, and a liveness group that
+  fails if the poll loop dies or stalls) and `/actuator/prometheus` on port 8081, which Compose
+  does not publish. Metrics: events by outcome (`worker_events_total{outcome=applied|skipped|invalid|failed}`),
+  processing time and end-to-end lag as histograms, messages in flight, and poll errors.
+- **Alarms** ([`infra/terraform/sqs.tf`](infra/terraform/sqs.tf)): any message in the dead-letter
+  queue, and an oldest message older than 5 minutes (the worker is down or falling behind).
 - The sync path (`HabitController`) has its own concurrency edge case: two requests completing the
   same habit at once can both pass the "already completed?" check before either commits, so the
   loser hits the DB's `(habit_id, completed_date)` unique constraint. Found via a concurrent load
@@ -198,7 +220,10 @@ Run from the repository root:
 ```
 
 **Unit tests** (`*Test`, Mockito) cover streak/XP calculation, goal-period no-ops, JWT handling,
-the scheduled automations, and idempotent message processing.
+the scheduled automations, and idempotent message processing. `SqsPollerTest` runs the poller
+against a fake queue: it never holds more messages than idle threads, a stop lets the messages in
+flight finish before the client closes, a message still running at the deadline is left for
+redelivery, and failed polls back off.
 
 **Integration tests** (`*IT`, [Testcontainers](https://testcontainers.com/)) start a real
 PostgreSQL and an SQS-compatible broker in Docker and run the actual services against them:
@@ -211,7 +236,8 @@ PostgreSQL and an SQS-compatible broker in Docker and run the actual services ag
 | [`OpenApiContractIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/OpenApiContractIT.java) | The committed `openapi.json` matches what the running API serves. |
 | [`CompletionOutboxIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/CompletionOutboxIT.java) | The completion and its event are written together and the relay publishes the event; if the event cannot be written, the completion is rolled back with it; 20 simultaneous completions leave exactly one event; an event written while the queue is down is delivered once it is back. |
 | [`OutboxRelayIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/OutboxRelayIT.java) | A relay skips rows another relay has locked instead of waiting for them; six relays released together publish each of 30 events exactly once; the purge removes old published events and never an unpublished one. |
-| [`CompletionPipelineIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/CompletionPipelineIT.java) | The worker grants XP, streaks, and achievements from a queued event; duplicate deliveries grant the reward once; malformed messages are deleted; a failure mid-processing rolls back and the redelivery succeeds; a message that always fails moves to the dead-letter queue after 5 attempts. |
+| [`CompletionPipelineIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/CompletionPipelineIT.java) | The worker grants XP, streaks, and achievements from a queued event; duplicate deliveries grant the reward once; malformed messages are deleted; a failure mid-processing rolls back and the redelivery succeeds; a message that always fails moves to the dead-letter queue after 5 attempts; a user whose reward is stuck on a lock does not hold up another user's (this fails with one thread); health and metrics report the worker. |
+| [`StreakResetRaceIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakResetRaceIT.java) | The nightly streak reset committing in the middle of a reward cannot leave the just-completed habit with a zero streak. The test forces the interleaving with a second connection; the previous code failed it. |
 | [`ConcurrentProcessingIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/ConcurrentProcessingIT.java) | Several workers at once: the same event handled twice rewards and emails once; two days of one habit handled together lose no XP; different habits of one new user unlock the first achievement once. All of these failed before the event-id table and the per-user lock. Also: an older day handled late still earns its streak without rewinding the current one, and a reward does not undo an edit made meanwhile. |
 | [`StreakQueryIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakQueryIT.java) | The single-query streak calculation gives the same answer as counting back one day (or week) at a time, on 120 random completion histories, including across a year boundary. |
 | [`AchievementUnlockIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/AchievementUnlockIT.java) | The XP achievement unlocks when a user's total across habits reaches 100, the streak achievement on the seventh day in a row, and each only once. |
@@ -244,6 +270,9 @@ How to run it is in [`load/README.md`](load/README.md); recorded numbers are in
   for a one-day streak and from 77.6 ms to 6.0 ms for a 365-day streak (one window-function query
   for the streak, and about ten achievement queries cut to three). The nightly streak reset over
   20,000 habits went from 5.1 s to 0.2 s (one UPDATE instead of 20,000).
+- **Worker concurrency.** Clearing a backlog of 6,000 queued events, the worker went from
+  242 events/s with one thread to 650 events/s with eight (median of three alternating runs,
+  about 2.7 times), with every completion still rewarded exactly once.
 
 ## Weekly summaries (Claude)
 
@@ -332,7 +361,9 @@ invocation layer meant to run on AWS:
   locally by invoking them as plain Python functions against a running API instance (see git
   history) — real behavior, not just read-through.
 - `infra/terraform/` — EventBridge schedules, the two Lambda functions, a minimal logs-only IAM
-  role, and an SQS dead-letter queue + redrive policy for the completion queue. Runs clean through
+  role, an SQS dead-letter queue + redrive policy for the completion queue, and CloudWatch alarms
+  on the dead-letter queue and on the age of the oldest message (`alarm_topic_arn` to notify an
+  SNS topic). Runs clean through
   `terraform init` and `terraform validate` with no AWS credentials. **Not applied** — `terraform
   plan`/`apply` need a real AWS account and haven't been run, so treat this as reviewed,
   syntactically-valid IaC rather than verified infrastructure.
@@ -341,4 +372,4 @@ invocation layer meant to run on AWS:
 
 - Deploying the Terraform (`terraform apply`) against a real AWS account
 - Full AWS deployment for the app itself (RDS, ECS Fargate behind ALB, S3/CloudFront for the frontend, SSM for config)
-- CloudWatch dashboards for queue depth and worker error rate
+- A dashboard for the worker's Prometheus metrics (they are exported; nothing scrapes them yet)

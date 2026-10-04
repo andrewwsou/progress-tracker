@@ -13,16 +13,18 @@
 #   ./load/run.sh streak       how long the worker takes to reward streaks of 1, 30 and 365 days
 #   ./load/run.sh reset        how long the nightly streak-reset job takes over 20,000 lapsed habits
 #   ./load/run.sh chaos        steady load while the worker is killed and the queue is frozen
+#   ./load/run.sh drain        how fast the worker clears a backlog of queued completions
 #   ./load/run.sh all          all of the above
 #
-# Tunables (environment variables): REQUESTS, VUS, RATE, DURATION, USERS, P95_LIMIT_MS, API_PORT.
+# Tunables (environment variables): REQUESTS, VUS, RATE, DURATION, USERS, P95_LIMIT_MS, API_PORT,
+# WORKER_CONCURRENCY.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SCENARIO="${1:-}"
 case "$SCENARIO" in
-  contention|compare|streak|reset|chaos|all) ;;
-  *) sed -n '2,18p' load/run.sh | sed 's/^# \{0,1\}//'; exit 2 ;;
+  contention|compare|streak|reset|chaos|drain|all) ;;
+  *) sed -n '2,20p' load/run.sh | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
 
 REQUESTS="${REQUESTS:-8000}"     # contention: total requests against the one habit
@@ -92,6 +94,20 @@ run_k6() {
 k6_failed() {
   echo "  FAIL  $1: k6 reported failed thresholds or could not run"
   FAILED=true
+}
+
+# Waits until the API has sent every event to the queue.
+wait_for_published() {
+  local timeout="$1" waited=0
+  until [[ "$(sql "select count(*) from outbox_events where published_at is null")" == "0" ]]; do
+    if (( waited >= timeout )); then
+      echo "  FAIL  events still unpublished after ${timeout}s"
+      FAILED=true
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
 }
 
 # Waits until every completion has its reward and every event has been published.
@@ -320,6 +336,37 @@ scenario_chaos() {
   echo "  $(queue_delay)" | tee -a "$RESULTS_DIR/chaos.txt"
 }
 
+# A backlog built up while the worker was stopped, then the time the worker takes to clear it.
+# Measures the worker alone: by the time it starts, the API and the queue have done their part.
+# The rate is events over the time between the first and the last event the worker picked up.
+scenario_drain() {
+  local concurrency events seconds rate
+  log "drain: $RATE completions/s for ${DURATION}s over $USERS users queue up with the worker stopped; then it clears them"
+  stack_up true
+  fault stop worker
+  run_k6 drain -e SCENARIO=throughput -e RATE="$RATE" -e DURATION="$DURATION" \
+    -e USERS="$USERS" -e P95_LIMIT_MS="$P95_LIMIT_MS" || k6_failed drain
+  wait_for_published 120
+  fault start worker
+  wait_for_rewards 900
+  check_database true
+
+  concurrency=$(docker compose exec -T worker printenv WORKER_CONCURRENCY 2>/dev/null || echo 1)
+  events=$(sql "select count(*) from processed_events")
+  seconds=$(sql "select round(extract(epoch from max(processed_at) - min(processed_at))::numeric, 1) from processed_events")
+  rate=$(sql "select round((count(*) / greatest(extract(epoch from max(processed_at) - min(processed_at)), 0.001))::numeric, 1)
+              from processed_events")
+  {
+    echo
+    echo "== drain =="
+    echo "  $events events cleared in ${seconds}s: $rate events/s (worker concurrency $concurrency)"
+    echo "RESULT label=drain concurrency=$concurrency events=$events seconds=$seconds events_per_s=$rate"
+  } | tee -a "$RESULTS_DIR/drain.txt"
+  # The worker's own view (its metrics endpoint is not published, so ask from inside the container).
+  docker compose exec -T worker curl -fsS localhost:8081/actuator/prometheus 2>/dev/null \
+    | grep -E '^(worker_|hikaricp_connections_(pending|timeout_total))' >"$RESULTS_DIR/drain-metrics.txt" || true
+}
+
 # --- main ----------------------------------------------------------------------------------
 
 trap stack_down EXIT
@@ -330,7 +377,8 @@ case "$SCENARIO" in
   streak)     scenario_streak ;;
   reset)      scenario_reset ;;
   chaos)      scenario_chaos ;;
-  all)        scenario_contention; scenario_compare; scenario_streak; scenario_reset; scenario_chaos ;;
+  drain)      scenario_drain ;;
+  all)        scenario_contention; scenario_compare; scenario_streak; scenario_reset; scenario_chaos; scenario_drain ;;
 esac
 
 log "results"

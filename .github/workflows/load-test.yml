@@ -16,6 +16,7 @@ on:
           - streak
           - reset
           - chaos
+          - drain
 
 permissions:
   contents: read

@@ -23,6 +23,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -107,7 +108,19 @@ class CompletionProcessorTest {
                     return streak;
                 });
 
-        when(habitRepository.save(any(Habit.class))).thenAnswer(inv -> inv.getArgument(0));
+        // Stands in for the reward UPDATE: the same rules, applied to the in-memory habit.
+        when(habitRepository.applyReward(eq(habit.getId()), any(LocalDate.class), anyInt(), anyInt())).thenAnswer(inv -> {
+            LocalDate date = inv.getArgument(1);
+            int streak = inv.getArgument(2);
+            int xp = inv.getArgument(3);
+            if (habit.getLastCompletedDate() == null || !date.isBefore(habit.getLastCompletedDate())) {
+                habit.setCurrentStreak(streak);
+                habit.setLastCompletedDate(date);
+            }
+            habit.setLongestStreak(Math.max(habit.getLongestStreak(), streak));
+            habit.setXpTotal(habit.getXpTotal() + xp);
+            return 1;
+        });
     }
 
     @Test

@@ -43,6 +43,14 @@ public record SummaryProperties(@DefaultValue Llm llm, @DefaultValue Job job) {
             @DefaultValue("20") int maxHabits,
             @DefaultValue("8000") int maxPromptBytes
     ) {
+        public Llm {
+            // A negative value would turn a cap into no cap (or an SDK default), so refuse to start.
+            if (maxRetries < 0 || maxCallsPerDay < 0 || dailyTokenBudget < 0 || maxOutputTokens < 1
+                    || maxHabits < 0 || maxPromptBytes < 0) {
+                throw new IllegalArgumentException("summary.llm limits must not be negative (max-retries, "
+                        + "max-calls-per-day, daily-token-budget, max-habits, max-prompt-bytes; max-output-tokens >= 1)");
+            }
+        }
     }
 
     /**

@@ -10,6 +10,7 @@ import org.springframework.core.io.ClassPathResource;
 import java.io.IOException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** The defaults that keep Claude from being called, or from costing much, by accident. */
 class SummaryDefaultsTest {
@@ -24,6 +25,14 @@ class SummaryDefaultsTest {
         assertThat(defaults.maxCallsPerDay()).isEqualTo(10);
         assertThat(defaults.dailyTokenBudget()).isEqualTo(100_000);
         assertThat(defaults.maxPromptBytes()).isEqualTo(8_000);
+    }
+
+    @Test
+    void aNegativeLimitIsRefusedRatherThanTurningACapOff() {
+        Binder binder = new Binder(new MapConfigurationPropertySource(java.util.Map.of("summary.llm.max-retries", "-1")));
+
+        assertThatThrownBy(() -> binder.bindOrCreate("summary", SummaryProperties.class))
+                .rootCause().hasMessageContaining("must not be negative");
     }
 
     @Test

@@ -20,9 +20,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * What happens when more than one worker handles events at the same moment. The poller in this
- * JVM is single-threaded, so each test calls the processor from several threads released together,
- * which is what two worker instances (or a redelivery racing the original) look like to the database.
+ * What happens when more than one worker handles events at the same moment. Each test calls the
+ * processor from several threads released together, which is what the poller's worker threads,
+ * two worker instances, or a redelivery racing the original look like to the database. Calling it
+ * directly makes every race happen on every round, instead of whenever the queue happens to line
+ * two events up.
  *
  * Races are a matter of timing, so every scenario is repeated many times on fresh data.
  * Before the inbox table and the per-user lock existed, all three scenarios failed.
@@ -149,8 +151,11 @@ class ConcurrentProcessingIT extends WorkerIntegrationTestBase {
         assertThat(xpEarned(habitId, today)).isEqualTo(10);               // day one of the new streak
         assertThat(xpEarned(habitId, today.minusDays(2))).isEqualTo(22);  // day seven of the old one
         assertThat(currentStreak(habitId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select last_completed_date from habit where id = ?", LocalDate.class, habitId))
+                .isEqualTo(today); // the older day did not move it back
         assertThat(jdbc.queryForObject("select longest_streak from habit where id = ?", Integer.class, habitId))
                 .isEqualTo(7);
+        assertThat(xpTotal(habitId)).isEqualTo(32); // both rewards added: 10 for today, 22 for the older day
         assertThat(unlockedAchievements(userId)).containsExactly("FIRST_COMPLETION", "STREAK_7");
     }
 

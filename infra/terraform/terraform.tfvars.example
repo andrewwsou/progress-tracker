@@ -5,3 +5,7 @@ aws_region       = "us-west-1"
 environment      = "dev"
 api_base_url     = "https://api.progresstracker.example.com"
 automation_token = "CHANGE_ME"
+
+# Optional: an SNS topic to notify when a queue alarm fires (dead-letter queue not empty,
+# or the oldest message older than 5 minutes). Blank: the alarms only show in CloudWatch.
+# alarm_topic_arn = "arn:aws:sns:us-west-1:123456789012:progresstracker-alerts"

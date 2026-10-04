@@ -70,6 +70,11 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SUMMARY_LLM_MODEL: ${SUMMARY_LLM_MODEL:-claude-opus-5-5}
       SUMMARY_LLM_MAX_CALLS_PER_DAY: ${SUMMARY_LLM_MAX_CALLS_PER_DAY:-10}
+      # Messages processed at the same time (at most DB_POOL_SIZE minus 2).
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-8}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+    # On SIGTERM the worker stops polling and finishes what it has (up to 25 s); give it that long.
+    stop_grace_period: 35s
     depends_on:
       # The API creates the shared tables on startup, so the worker waits for it
       # (the worker then adds its own processed_events table).

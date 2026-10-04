@@ -14,4 +14,8 @@ RUN groupadd --system app && useradd --system --gid app --no-create-home app
 WORKDIR /app
 COPY --from=build /build/target/*.jar app.jar
 USER app
+# Management port: health checks and metrics only.
+EXPOSE 8081
+HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=12 \
+    CMD curl -fsS http://localhost:8081/actuator/health || exit 1
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

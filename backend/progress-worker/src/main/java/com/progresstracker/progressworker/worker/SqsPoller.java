@@ -3,11 +3,16 @@ package com.progresstracker.progressworker.worker;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.progresstracker.progressworker.service.CompletionProcessor;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.SmartLifecycle;
+import org.springframework.scheduling.concurrent.CustomizableThreadFactory;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -19,17 +24,42 @@ import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Reads completion events from SQS and hands each one to a fixed pool of worker threads.
+ *
+ * <ul>
+ *   <li>Backpressure: it asks SQS for at most as many messages as there are idle workers, so a
+ *       received message never waits in memory while its visibility timeout runs down.</li>
+ *   <li>A message is deleted once its reward has committed. If processing fails it is left alone:
+ *       SQS redelivers it, and after the queue's maxReceiveCount moves it to the dead-letter queue.</li>
+ *   <li>Graceful stop: polling stops first, the messages in flight finish (up to a deadline), and
+ *       only then is the SQS client closed. Anything cut off is redelivered by SQS.</li>
+ * </ul>
+ *
+ * Processing in parallel is safe: {@link CompletionProcessor} applies one user's rewards one at a
+ * time with a row lock, and ignores an event it has already handled.
+ */
 @Component
-public class SqsPoller {
+public class SqsPoller implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(SqsPoller.class);
+
+    private static final long MAX_POLL_BACKOFF_MS = 30_000;
 
     private final ObjectMapper objectMapper;
     private final CompletionProcessor completionProcessor;
@@ -52,24 +82,84 @@ public class SqsPoller {
     private String endpointOverride;
 
     @Value("${worker.waitTimeSeconds:20}")
-    private int waitTimeSeconds;
+    private int waitTimeSeconds = 20;
 
     @Value("${worker.maxMessages:10}")
-    private int maxMessages;
+    private int maxMessages = 10;
 
     @Value("${worker.visibilityTimeoutSeconds:60}")
-    private int visibilityTimeoutSeconds;
+    private int visibilityTimeoutSeconds = 60;
+
+    @Value("${worker.concurrency:8}")
+    private int concurrency = 8;
+
+    @Value("${worker.shutdownTimeoutSeconds:25}")
+    private int shutdownTimeoutSeconds = 25;
+
+    @Value("${spring.datasource.hikari.maximum-pool-size:10}")
+    private int databasePoolSize = 10;
+
+    /** First pause after a failed poll. It doubles with each failure in a row, up to 30 s. */
+    long pollErrorBackoffMs = 1_000;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
-    private Thread loopThread;
+    private final AtomicInteger inFlight = new AtomicInteger();
+    private volatile long lastPollAtMillis = System.currentTimeMillis();
     private SqsClient sqsClient;
+    private Thread loopThread;
+    private Semaphore idleWorkers;
+    private ExecutorService workers;
+    private CountDownLatch stopRequested;
 
-    public SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor) {
-        this.objectMapper = objectMapper;
-        this.completionProcessor = completionProcessor;
+    private final Counter applied;
+    private final Counter skipped;
+    private final Counter invalid;
+    private final Counter failed;
+    private final Counter pollErrors;
+    private final Timer processing;
+    private final Timer lag;
+
+    @Autowired
+    public SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor, MeterRegistry meterRegistry) {
+        this(objectMapper, completionProcessor, meterRegistry, null);
     }
 
-    @PostConstruct
+    /** For tests: uses the given client instead of building one. */
+    SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor, MeterRegistry meterRegistry,
+              SqsClient sqsClient) {
+        this.objectMapper = objectMapper;
+        this.completionProcessor = completionProcessor;
+        this.sqsClient = sqsClient;
+
+        this.applied = events(meterRegistry, "applied");
+        this.skipped = events(meterRegistry, "skipped");
+        this.invalid = events(meterRegistry, "invalid");
+        this.failed = events(meterRegistry, "failed");
+        this.pollErrors = Counter.builder("worker.poll.errors")
+                .description("Failed requests for messages")
+                .register(meterRegistry);
+        this.processing = Timer.builder("worker.event.processing")
+                .description("Time to apply one reward, transaction included")
+                .publishPercentileHistogram()
+                .register(meterRegistry);
+        this.lag = Timer.builder("worker.event.lag")
+                .description("From the API recording a completion to the worker committing its reward")
+                .publishPercentileHistogram()
+                .maximumExpectedValue(Duration.ofMinutes(30)) // backlogs and redeliveries run to minutes
+                .register(meterRegistry);
+        Gauge.builder("worker.inflight", inFlight, AtomicInteger::get)
+                .description("Messages being processed right now")
+                .register(meterRegistry);
+    }
+
+    private static Counter events(MeterRegistry registry, String outcome) {
+        return Counter.builder("worker.events")
+                .description("Completion events handled, by outcome")
+                .tag("outcome", outcome)
+                .register(registry);
+    }
+
+    @Override
     public void start() {
         if (!workerEnabled) {
             log.info("Worker disabled (worker.enabled=false)");
@@ -82,21 +172,35 @@ public class SqsPoller {
         if (sqsUrl == null || sqsUrl.isBlank()) {
             throw new IllegalStateException("QUEUE_SQS_URL must be set when QUEUE_ENABLED=true");
         }
-
-        SqsClientBuilder builder = SqsClient.builder()
-                .region(Region.of(awsRegion))
-                .credentialsProvider(DefaultCredentialsProvider.create());
-        if (endpointOverride != null && !endpointOverride.isBlank()) {
-            builder.endpointOverride(parseEndpoint(endpointOverride));
+        // Every worker holds a database connection while it runs. Leave one for the weekly
+        // summary job and one for health checks, or workers would queue for connections.
+        int maxConcurrency = databasePoolSize - 2;
+        if (concurrency < 1 || concurrency > maxConcurrency) {
+            throw new IllegalStateException("WORKER_CONCURRENCY must be between 1 and " + maxConcurrency
+                    + " (DB_POOL_SIZE " + databasePoolSize + " minus 2), but was " + concurrency);
         }
-        this.sqsClient = builder.build();
 
+        if (sqsClient == null) {
+            SqsClientBuilder builder = SqsClient.builder()
+                    .region(Region.of(awsRegion))
+                    .credentialsProvider(DefaultCredentialsProvider.create())
+                    // A cap on each call, retries included, so a queue that accepts connections but
+                    // never answers cannot hold the poll loop (or a worker's delete) for minutes.
+                    .overrideConfiguration(o -> o.apiCallTimeout(Duration.ofSeconds(waitTimeSeconds + 10L)));
+            if (endpointOverride != null && !endpointOverride.isBlank()) {
+                builder.endpointOverride(parseEndpoint(endpointOverride));
+            }
+            sqsClient = builder.build();
+        }
+
+        idleWorkers = new Semaphore(concurrency);
+        workers = Executors.newFixedThreadPool(concurrency, new CustomizableThreadFactory("sqs-worker-"));
+        stopRequested = new CountDownLatch(1);
+        lastPollAtMillis = System.currentTimeMillis();
         running.set(true);
         loopThread = new Thread(this::pollLoop, "sqs-poller");
-        loopThread.setDaemon(false);
-
         loopThread.start();
-        log.info("SQS poller started");
+        log.info("SQS poller started: up to {} messages at a time", concurrency);
     }
 
     private static URI parseEndpoint(String value) {
@@ -114,23 +218,77 @@ public class SqsPoller {
     }
 
     private void pollLoop() {
+        long backoffMs = 0;
         while (running.get()) {
+            int reserved = 0;
             try {
-                ReceiveMessageRequest req = ReceiveMessageRequest.builder()
+                // Wait for an idle worker, then ask for no more messages than there are idle workers.
+                idleWorkers.acquire();
+                reserved = 1;
+                while (reserved < maxMessages && idleWorkers.tryAcquire()) {
+                    reserved++;
+                }
+                if (!running.get()) {
+                    break;
+                }
+
+                List<Message> messages = sqsClient.receiveMessage(ReceiveMessageRequest.builder()
                         .queueUrl(sqsUrl)
                         .waitTimeSeconds(waitTimeSeconds)
-                        .maxNumberOfMessages(maxMessages)
+                        .maxNumberOfMessages(reserved)
                         .visibilityTimeout(visibilityTimeoutSeconds)
-                        .build();
-
-                List<Message> messages = sqsClient.receiveMessage(req).messages();
-                for (Message m : messages) {
-                    handleMessage(m);
+                        .build()).messages();
+                for (Message message : messages) {
+                    dispatch(message); // the message now owns one of the reserved workers
+                    reserved--;
                 }
+                backoffMs = 0;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             } catch (Exception e) {
-                log.error("SQS poll loop error", e);
-                sleep(2000);
+                if (!running.get()) {
+                    break;
+                }
+                pollErrors.increment();
+                backoffMs = backoffMs == 0 ? pollErrorBackoffMs : Math.min(backoffMs * 2, MAX_POLL_BACKOFF_MS);
+                log.error("SQS poll failed; trying again in {} ms", backoffMs, e);
+                if (awaitStop(backoffMs)) {
+                    break;
+                }
+            } finally {
+                idleWorkers.release(reserved); // workers reserved for messages that did not arrive
+                lastPollAtMillis = System.currentTimeMillis();
             }
+        }
+    }
+
+    private void dispatch(Message message) {
+        inFlight.incrementAndGet();
+        try {
+            workers.execute(() -> {
+                try {
+                    handleMessage(message);
+                } finally {
+                    inFlight.decrementAndGet();
+                    idleWorkers.release();
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // Only happens while stopping. The message stays on the queue and SQS redelivers it.
+            inFlight.decrementAndGet();
+            idleWorkers.release();
+            log.warn("Stopping, so not processing message {}; SQS will redeliver it", message.messageId());
+        }
+    }
+
+    /** Pauses for the given time, or until a stop is requested. Returns true if stopping. */
+    private boolean awaitStop(long millis) {
+        try {
+            return stopRequested.await(millis, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return true;
         }
     }
 
@@ -156,6 +314,7 @@ public class SqsPoller {
 
             if (userIdNode.isMissingNode() || habitIdNode.isMissingNode() || dateStr == null || dateStr.isBlank()) {
                 log.error("Invalid message schema (deleting message): {}", message.body());
+                invalid.increment();
                 delete(message);
                 return;
             }
@@ -168,6 +327,7 @@ public class SqsPoller {
             occurredAt = parseOccurredAt(node);
         } catch (Exception e) {
             log.error("Unparseable message (deleting message): {}", message.body(), e);
+            invalid.increment();
             delete(message);
             return;
         }
@@ -178,17 +338,28 @@ public class SqsPoller {
         // finishes the original attempt or is a no-op, never a duplicate reward.
         try {
             long start = System.nanoTime();
-            boolean applied = completionProcessor.process(eventId, userId, habitId, date, occurredAt);
-            double elapsedMs = (System.nanoTime() - start) / 1_000_000.0;
+            boolean rewarded = completionProcessor.process(eventId, userId, habitId, date, occurredAt);
+            long elapsedNanos = System.nanoTime() - start;
+            double elapsedMs = elapsedNanos / 1_000_000.0;
+            processing.record(elapsedNanos, TimeUnit.NANOSECONDS);
             delete(message);
-            if (applied) {
+            if (rewarded) {
+                applied.increment();
+                if (occurredAt != null) {
+                    Duration sinceCompletion = Duration.between(occurredAt, OffsetDateTime.now());
+                    if (!sinceCompletion.isNegative()) {
+                        lag.record(sinceCompletion);
+                    }
+                }
                 log.info("Processed completion eventId={} userId={} habitId={} date={} elapsedMs={}",
                         eventId, userId, habitId, date, elapsedMs);
             } else {
+                skipped.increment();
                 log.info("No reward applied eventId={} habitId={} date={} (already handled, or habit deleted)",
                         eventId, habitId, date);
             }
         } catch (Exception e) {
+            failed.increment();
             log.error("Failed processing completion eventId={} userId={} habitId={} date={} (leaving message for retry): {}",
                     eventId, userId, habitId, date, e.getMessage(), e);
         }
@@ -235,20 +406,57 @@ public class SqsPoller {
         }
     }
 
-
-    private void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
+    /**
+     * Stops taking new messages, lets the current poll return and its messages finish, and closes
+     * the client last. Runs before the web server and the database pool shut down, because this
+     * bean is in the last lifecycle phase to start and so the first to stop.
+     */
+    @Override
+    public void stop() {
+        if (!running.getAndSet(false)) {
+            return;
+        }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(shutdownTimeoutSeconds);
+        stopRequested.countDown(); // wakes a poll loop that is backing off after an error
+        try {
+            // join(0) would wait forever, hence at least 1 ms.
+            loopThread.join(Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())));
+            if (loopThread.isAlive()) {
+                loopThread.interrupt();
+            }
+            workers.shutdown();
+            if (!workers.awaitTermination(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                log.warn("{} messages still in flight after {} s; stopping them, and SQS will redeliver them",
+                        inFlight.get(), shutdownTimeoutSeconds);
+                workers.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            workers.shutdownNow();
+            Thread.currentThread().interrupt();
+        } finally {
+            sqsClient.close();
+            log.info("SQS poller stopped");
+        }
     }
 
-    @PreDestroy
-    public void stop() {
-        running.set(false);
-        if (loopThread != null) {
-            try { loopThread.join(1500); } catch (InterruptedException ignored) {}
-        }
-        if (sqsClient != null) {
-            sqsClient.close();
-        }
-        log.info("SQS poller stopped");
+    @Override
+    public boolean isRunning() {
+        return running.get();
+    }
+
+    boolean loopAlive() {
+        return loopThread != null && loopThread.isAlive();
+    }
+
+    long millisSinceLastPoll() {
+        return System.currentTimeMillis() - lastPollAtMillis;
+    }
+
+    int inFlight() {
+        return inFlight.get();
+    }
+
+    int concurrency() {
+        return concurrency;
     }
 }

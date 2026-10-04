@@ -32,6 +32,49 @@ resource "aws_sqs_queue" "completions" {
   }
 }
 
+# Alarms. A message lands in the dead-letter queue only after failing maxReceiveCount times, so
+# any message there needs a person to look at it (then redrive it: processing is idempotent).
+# A growing age of the oldest message means the worker has stopped or cannot keep up.
+resource "aws_cloudwatch_metric_alarm" "completions_dlq_not_empty" {
+  alarm_name          = "progresstracker-completions-dlq-not-empty"
+  alarm_description   = "Completion events failed repeatedly and are waiting in the dead-letter queue."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.completions_dlq.name }
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_topic_arn == "" ? [] : [var.alarm_topic_arn]
+
+  tags = {
+    Environment = var.environment
+    Project     = "progress-tracker"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "completions_backlog_age" {
+  alarm_name          = "progresstracker-completions-backlog-age"
+  alarm_description   = "The oldest completion event has waited over 5 minutes: the worker is down or falling behind."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  dimensions          = { QueueName = aws_sqs_queue.completions.name }
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 300
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_topic_arn == "" ? [] : [var.alarm_topic_arn]
+
+  tags = {
+    Environment = var.environment
+    Project     = "progress-tracker"
+  }
+}
+
 output "completions_queue_url" {
   value = aws_sqs_queue.completions.url
 }

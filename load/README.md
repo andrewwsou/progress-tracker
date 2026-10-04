@@ -11,8 +11,8 @@ Recorded numbers, and what changed between them, are in [RESULTS.md](RESULTS.md)
 Needs Docker, `curl`, `jq`, and `python3`. Nothing else has to be installed: k6 runs as a container.
 
 ```
-./load/run.sh all          # every scenario, about 12 minutes
-./load/run.sh contention   # or one at a time: contention, compare, streak, reset, chaos
+./load/run.sh all          # every scenario, about 15 minutes
+./load/run.sh contention   # or one at a time: contention, compare, streak, reset, chaos, drain
 ```
 
 Every scenario starts a fresh stack with an empty database, so the checks afterwards can look
@@ -30,6 +30,7 @@ The script exits non-zero if a k6 threshold or a database check fails. It writes
 | `compare` | 100 completions per second for 30 seconds, each of a different habit, over 50 users. Run in sync mode and in async mode. | Under 1% failed requests, p95 under 200 ms, no request dropped by the load generator. | Every completion was rewarded once. |
 | `streak` | One completion at a time for habits with 0, 29, and 364 earlier days in a row. | | Reports how long the worker took to apply each reward, by streak length. |
 | `reset` | The nightly streak-reset job over 20,000 habits whose streaks have lapsed. | | Every lapsed streak is zero and nothing else changed. Reports how long the job took. |
+| `drain` | `RATE` completions per second for `DURATION` seconds over `USERS` users (100, 30, and 50 by default; RESULTS.md used `DURATION=60`), queued while the worker is stopped. Then the worker is started and clears the backlog. `WORKER_CONCURRENCY` sets its thread count. | The same thresholds as `compare`. | Every completion was rewarded exactly once. Reports the worker's rate: events divided by the time from the first to the last event it picked up. |
 | `chaos` | 100 completions per second for 40 seconds. Eight seconds in, the worker is killed with SIGKILL. Sixteen seconds in, the queue is frozen. Both come back at 24 seconds. | The same thresholds as `compare`: the API must not notice. | Every completion was still rewarded exactly once. |
 
 "Sync mode" computes the reward inside the request (`QUEUE_ENABLED=false`). "Async mode" records
@@ -54,10 +55,11 @@ Environment variables, with their defaults:
 |---|---|---|---|
 | `REQUESTS` | 8000 | contention | Total requests against the one habit |
 | `VUS` | 200 | contention | Requests in flight at a time |
-| `RATE` | 100 | compare, chaos | Completions per second |
-| `DURATION` | 30 | compare | Seconds of steady load |
-| `USERS` | 50 | compare, chaos | Users the completions are spread over |
-| `P95_LIMIT_MS` | 200 | compare, chaos | Fails the run if p95 latency is above this |
+| `RATE` | 100 | compare, chaos, drain | Completions per second |
+| `DURATION` | 30 | compare, drain | Seconds of steady load |
+| `USERS` | 50 | compare, chaos, drain | Users the completions are spread over |
+| `P95_LIMIT_MS` | 200 | compare, chaos, drain | Fails the run if p95 latency is above this |
+| `WORKER_CONCURRENCY` | 8 | drain (and every scenario's worker) | Messages the worker processes at a time; at most `DB_POOL_SIZE` − 2 |
 | `API_PORT` | 18080 | streak, reset | Host port of the load stack's API |
 
 For example: `VUS=1000 ./load/run.sh contention`.

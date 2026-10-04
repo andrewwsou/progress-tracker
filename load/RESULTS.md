@@ -118,10 +118,39 @@ The longest wait is the queue's 60-second visibility timeout: messages the kille
 taken were redelivered once it expired, and the worker's record of handled events kept any of
 them from being rewarded twice.
 
+Repeated with the 8-thread worker of section 6: 0 of 4,000 requests failed, every completion was
+rewarded exactly once, and the longest wait was 60.3 s (the same visibility timeout).
+
+## 6. Worker throughput: one thread versus eight
+
+`RATE=100 DURATION=60 USERS=50 ./load/run.sh drain`: 6,000 completions over 50 users are queued
+while the worker is stopped,
+then the worker is started and clears them. The rate is events divided by the time between the
+first and the last event the worker picked up, so it measures the worker alone. "Before" is the
+previous worker (one thread, built from the commit before this change); "after" is the new one
+with `WORKER_CONCURRENCY=8`. Runs alternated before, after, before, after, so a machine that
+warms up or slows down affects both sides equally.
+
+| Run | Before: 1 thread | After: 8 threads |
+|---|---:|---:|
+| 1 | 242 events/s | 578 events/s |
+| 2 | 259 events/s | 682 events/s |
+| 3 | 241 events/s | 650 events/s |
+| **Median** | **242 events/s** (6,001 in 24.8 s) | **650 events/s** (6,001 in 9.2 s) |
+
+**About 2.7 times faster** (2.2 to 2.8 times run for run). Every run passed every database check
+(each completion rewarded exactly once), and the worker's own metrics showed no request waiting
+for a database connection (`hikaricp_connections_timeout_total` 0, pending 0) and no failed event.
+
+Why not 8 times: the database, the API, the queue, and the load generator share the same 8 CPUs,
+and one user's rewards still apply one at a time (the row lock), so with 50 users some threads
+wait for each other. The new worker run with one thread (`WORKER_CONCURRENCY=1`) cleared the
+same backlog at 201 events/s in one run, so the gain comes from the threads, not from anything
+else in the change. Three earlier baseline runs, before the alternating series, measured 175, 205,
+and 229 events/s while the machine warmed up; they are left out of the median above.
+
 ## What I would look at next
 
-- **Worker throughput.** One thread handles about 100 events per second here. Processing
-  several messages at once, with a cap, would raise that; the per-user lock already makes it safe.
 - **The first completion in sync mode.** It is the slow tail in section 2, and the same
   achievement optimisation the worker got would remove most of it.
 - **Listing habits.** `GET /api/habits` runs one progress query per habit. It was not under
