@@ -11,9 +11,14 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 
 import java.util.List;
+import java.util.Set;
 
 public interface UserAchievementRepository extends JpaRepository<UserAchievement, Long> {
     boolean existsByUserAndAchievement(User user, Achievement achievement);
+
+    /** The codes of everything the user has unlocked, in one query. */
+    @Query("select ua.achievement.code from UserAchievement ua where ua.user.id = :userId")
+    Set<String> findUnlockedCodes(@Param("userId") Long userId);
 
     /**
      * Unlocks an achievement unless the user already has it, without failing on the unique

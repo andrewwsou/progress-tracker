@@ -131,37 +131,13 @@ public class CompletionProcessor {
     }
 
     private int computeStreakEndingAt(Habit habit, LocalDate date) {
+        long streak;
         if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
-            return computeWeeklyStreakEndingAt(habit, date);
+            LocalDate weekStart = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+            streak = habitEntryRepository.weeklyStreakEndingAt(habit.getId(), weekStart, weekStart.plusDays(6));
+        } else {
+            streak = habitEntryRepository.dailyStreakEndingAt(habit.getId(), date);
         }
-        return computeDailyStreakEndingAt(habit, date);
-    }
-
-    private int computeDailyStreakEndingAt(Habit habit, LocalDate date) {
-        int streak = 0;
-        LocalDate d = date;
-        while (habitEntryRepository.existsByHabitAndCompletedDate(habit, d)) {
-            streak++;
-            d = d.minusDays(1);
-        }
-        return Math.max(streak, 1);
-    }
-
-    private int computeWeeklyStreakEndingAt(Habit habit, LocalDate date) {
-        int streak = 0;
-        LocalDate weekCursor = date;
-
-        while (true) {
-            LocalDate start = weekCursor.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-            LocalDate end = start.plusDays(6);
-
-            long count = habitEntryRepository.countByHabitAndCompletedDateBetween(habit, start, end);
-            if (count <= 0) break;
-
-            streak++;
-            weekCursor = start.minusDays(1);
-        }
-
-        return Math.max(streak, 1);
+        return (int) Math.max(streak, 1);
     }
 }

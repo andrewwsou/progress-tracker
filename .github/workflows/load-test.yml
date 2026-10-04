@@ -1,0 +1,43 @@
+name: Load test
+
+# Run by hand from the Actions tab. Load tests are slow and their timings depend on the runner,
+# so they are not part of the checks that run on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Scenario to run (see load/README.md)
+        type: choice
+        default: all
+        options:
+          - all
+          - contention
+          - compare
+          - streak
+          - reset
+          - chaos
+
+permissions:
+  contents: read
+
+jobs:
+  load-test:
+    name: Load test (${{ inputs.scenario }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # Starts the stack with Docker Compose, drives it with k6, and checks the database afterwards.
+      - name: Run the scenario
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+        run: ./load/run.sh "$SCENARIO"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: load-test-results
+          path: load/results/
+          if-no-files-found: ignore

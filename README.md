@@ -212,6 +212,9 @@ PostgreSQL and an SQS-compatible broker in Docker and run the actual services ag
 | [`OutboxRelayIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/OutboxRelayIT.java) | A relay skips rows another relay has locked instead of waiting for them; six relays released together publish each of 30 events exactly once; the purge removes old published events and never an unpublished one. |
 | [`CompletionPipelineIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/CompletionPipelineIT.java) | The worker grants XP, streaks, and achievements from a queued event; duplicate deliveries grant the reward once; malformed messages are deleted; a failure mid-processing rolls back and the redelivery succeeds; a message that always fails moves to the dead-letter queue after 5 attempts. |
 | [`ConcurrentProcessingIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/ConcurrentProcessingIT.java) | Several workers at once: the same event handled twice rewards and emails once; two days of one habit handled together lose no XP; different habits of one new user unlock the first achievement once. All of these failed before the event-id table and the per-user lock. Also: an older day handled late still earns its streak without rewinding the current one, and a reward does not undo an edit made meanwhile. |
+| [`StreakQueryIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakQueryIT.java) | The single-query streak calculation gives the same answer as counting back one day (or week) at a time, on 120 random completion histories, including across a year boundary. |
+| [`AchievementUnlockIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/AchievementUnlockIT.java) | The XP achievement unlocks when a user's total across habits reaches 100, the streak achievement on the seventh day in a row, and each only once. |
+| [`StreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/StreakResetIT.java) | The nightly streak reset, a single UPDATE, zeroes exactly the streaks that have lapsed and changes nothing else. |
 
 **End-to-end**: `scripts/smoke-test.sh` drives the Docker Compose stack over HTTP and waits for
 the worker's reward to appear, covering the hop between the two services.
@@ -220,18 +223,36 @@ the worker's reward to appear, covering the hop between the two services.
 pull request and every push to `main`, along with a JaCoCo line-coverage gate, the frontend lint, build, and generated-types check, and
 `terraform validate`.
 
+## Load tests
+
+[`load/run.sh`](load/run.sh) drives the Docker Compose stack with [k6](https://k6.io/) and then
+checks the database for what the pipeline promises: every completion rewarded, exactly once.
+How to run it is in [`load/README.md`](load/README.md); recorded numbers are in
+[`load/RESULTS.md`](load/RESULTS.md). On one laptop:
+
+- **Contention.** 8,000 requests completing the same habit, 200 and then 1,000 in flight at a
+  time: all 8,000 succeeded, with one completion and one reward recorded.
+- **Failures under load.** At 100 completions per second, the worker was killed and the queue
+  frozen mid-run. No request failed, and afterwards every completion had been rewarded exactly once.
+- **Sync versus async.** At the same request rate, async mode lowered average completion latency
+  by 43 to 55% and p99 by 73 to 95% across three runs.
+- **Optimisations it led to.** The worker's time to apply a reward went from 14.2 ms to 7.7 ms
+  for a one-day streak and from 77.6 ms to 6.0 ms for a 365-day streak (one window-function query
+  for the streak, and about ten achievement queries cut to three). The nightly streak reset over
+  20,000 habits went from 5.1 s to 0.2 s (one UPDATE instead of 20,000).
+
 ## Scheduled automations (infra/)
 
 Two batch jobs that don't belong on the request path:
 
 - **Nightly streak reset** — a habit's `currentStreak` is normally only recalculated on its next
   completion, so a habit a user abandoned keeps showing a stale streak indefinitely. This job
-  zeroes it out once the gap is long enough (`StreakResetService`).
+  zeroes it out once the gap is long enough (`StreakResetService`), in a single UPDATE.
 - **Weekly summary** — aggregates each user's completions/XP for the past week
   (`WeeklySummaryService`).
 
-Both are implemented as pure service logic in the API (unit tested, no AWS needed —
-`StreakResetServiceTest`, `WeeklySummaryServiceTest`) behind internal endpoints, plus a thin
+Both are implemented as pure service logic in the API (tested with no AWS needed —
+`StreakResetServiceTest`, `StreakResetIT`, `WeeklySummaryServiceTest`) behind internal endpoints, plus a thin
 invocation layer meant to run on AWS:
 
 - `infra/lambda/` — stdlib-only Python handlers that POST to the internal endpoints. Verified

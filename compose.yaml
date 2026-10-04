@@ -3,6 +3,7 @@
 #   docker compose up --build --wait start everything and wait until healthy (API on http://localhost:8080)
 #   ./scripts/smoke-test.sh          prove a completion flows API -> queue -> worker -> database
 #   docker compose down -v           stop and delete the data
+#   ./load/run.sh all                load tests (see load/README.md)
 #
 # Nothing here talks to AWS. Every credential below is a local-only placeholder.
 name: progress-tracker
@@ -11,7 +12,10 @@ x-backend-environment: &backend-environment
   DB_URL: jdbc:postgresql://postgres:5432/progresstracker
   DB_USERNAME: ptrack
   DB_PASSWORD: ptrack
-  QUEUE_ENABLED: "true"
+  # true: completions are rewarded by the worker through the queue. false: rewarded in the request.
+  # The stack is async unless STACK_QUEUE_ENABLED says otherwise (load/run.sh uses it to compare
+  # the two). It is deliberately not named QUEUE_ENABLED, so an app-level .env cannot switch it.
+  QUEUE_ENABLED: "${STACK_QUEUE_ENABLED:-true}"
   QUEUE_SQS_URL: http://sqs:9324/000000000000/progresstracker-completions
   QUEUE_ENDPOINT_OVERRIDE: http://sqs:9324
   AWS_REGION: us-west-1
@@ -43,6 +47,8 @@ services:
     environment:
       <<: *backend-environment
       JWT_SECRET: ${JWT_SECRET:-local-development-only-secret-not-for-production}
+      # Unlocks the scheduled-job endpoints (/api/internal/automations/*). Blank keeps them locked.
+      AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:-}
     ports:
       # Loopback only: this stack signs tokens with a placeholder secret and is for local use.
       # If you change the port, run the smoke test with BASE_URL=http://localhost:<port>.
@@ -63,6 +69,16 @@ services:
         condition: service_healthy
       sqs:
         condition: service_started
+
+  # Load generator. Not started by `up`; load/run.sh runs it with `docker compose run`.
+  # It sits on the Compose network, so the load does not pass through the host's port forwarding.
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: ["load"]
+    environment:
+      BASE_URL: http://api:8080
+    volumes:
+      - ./load:/load:ro
 
 volumes:
   postgres-data:

@@ -95,8 +95,17 @@ class CompletionProcessorTest {
             return entry;
         });
 
-        when(habitEntryRepository.existsByHabitAndCompletedDate(eq(habit), any()))
-                .thenAnswer(inv -> storedEntries.containsKey(inv.getArgument(1, LocalDate.class)));
+        // Stands in for the streak query: count stored days backwards from the given date.
+        when(habitEntryRepository.dailyStreakEndingAt(eq(habit.getId()), any()))
+                .thenAnswer(inv -> {
+                    LocalDate day = inv.getArgument(1, LocalDate.class);
+                    long streak = 0;
+                    while (storedEntries.containsKey(day)) {
+                        streak++;
+                        day = day.minusDays(1);
+                    }
+                    return streak;
+                });
 
         when(habitRepository.save(any(Habit.class))).thenAnswer(inv -> inv.getArgument(0));
     }

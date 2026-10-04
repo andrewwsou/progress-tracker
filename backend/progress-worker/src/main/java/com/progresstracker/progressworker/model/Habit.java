@@ -11,6 +11,9 @@ import java.time.LocalDateTime;
 // columns with the stale values it loaded.
 @Entity
 @DynamicUpdate
+// PostgreSQL does not index foreign keys by itself. Listing a user's habits and summing their XP
+// both filter on user_id, and without this index each of those reads the whole table.
+@Table(indexes = @Index(name = "idx_habit_user_id", columnList = "user_id"))
 public class Habit {
 
     public enum Frequency { DAILY, WEEKLY }

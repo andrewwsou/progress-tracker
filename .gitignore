@@ -50,3 +50,6 @@ __pycache__/
 
 # the example env file documents variable names only and is safe to commit
 !.env.example
+
+### Load test output (load/RESULTS.md holds the recorded results) ###
+load/results/

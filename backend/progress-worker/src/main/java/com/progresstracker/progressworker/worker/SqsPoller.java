@@ -177,10 +177,13 @@ public class SqsPoller {
         // CompletionProcessor.process() is idempotent per event - a retried delivery either
         // finishes the original attempt or is a no-op, never a duplicate reward.
         try {
+            long start = System.nanoTime();
             boolean applied = completionProcessor.process(eventId, userId, habitId, date, occurredAt);
+            double elapsedMs = (System.nanoTime() - start) / 1_000_000.0;
             delete(message);
             if (applied) {
-                log.info("Processed completion eventId={} userId={} habitId={} date={}", eventId, userId, habitId, date);
+                log.info("Processed completion eventId={} userId={} habitId={} date={} elapsedMs={}",
+                        eventId, userId, habitId, date, elapsedMs);
             } else {
                 log.info("No reward applied eventId={} habitId={} date={} (already handled, or habit deleted)",
                         eventId, habitId, date);
