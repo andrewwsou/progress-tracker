@@ -1,6 +1,7 @@
 # Progress Tracker
 
 [![CI](https://github.com/andrewwsou/progress-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/andrewwsou/progress-tracker/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/andrewwsou/progress-tracker/actions/workflows/codeql.yml/badge.svg)](https://github.com/andrewwsou/progress-tracker/actions/workflows/codeql.yml)
 
 A habit-tracking app with streaks, XP, and achievements, built to demonstrate an event-driven
 backend: habit completions are recorded synchronously but rewarded (streaks/XP/achievements)
@@ -270,6 +271,10 @@ write it, covering both paths between the two services.
 **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all of the above on every
 pull request and every push to `main`, along with a JaCoCo line-coverage gate, the frontend lint, build, and generated-types check, and
 `terraform validate`.
+[CodeQL](.github/workflows/codeql.yml) scans the Java, TypeScript, and Python code and the workflows
+themselves for security bugs on every pull request and weekly, and
+[Dependabot](.github/dependabot.yml) opens weekly pull requests for minor and patch dependency
+updates (Maven, npm, Docker base images, GitHub Actions, Terraform providers), which CI then checks.
 
 ## Load tests
 

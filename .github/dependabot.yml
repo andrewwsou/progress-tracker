@@ -1,0 +1,53 @@
+# Weekly dependency update pull requests. Minor and patch updates are grouped into one PR per
+# ecosystem so they arrive together; CI checks each one. Major versions (Spring Boot 4, a new
+# Java base image, React 20, ...) are left out on purpose: those are planned upgrades, not chores.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directories:
+      - /backend/progresstracker
+      - /backend/progress-worker
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      maven-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: docker
+    directories:
+      - /backend/progresstracker
+      - /backend/progress-worker
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: terraform
+    directory: /infra/terraform
+    schedule:
+      interval: weekly
