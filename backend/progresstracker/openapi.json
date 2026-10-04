@@ -53,6 +53,10 @@
       },
       "HabitResponse" : {
         "properties" : {
+          "completedForPeriod" : {
+            "description" : "Already completed for the current day (daily habits) or week (weekly habits), by the server's calendar, so a client never has to guess the date",
+            "type" : "boolean"
+          },
           "createdAt" : {
             "format" : "date-time",
             "type" : "string"
@@ -112,6 +116,7 @@
           }
         },
         "required" : [
+          "completedForPeriod",
           "currentStreak",
           "frequency",
           "goalPeriod",

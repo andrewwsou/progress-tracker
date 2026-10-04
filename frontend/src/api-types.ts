@@ -134,6 +134,8 @@ export interface components {
             name: string;
         };
         HabitResponse: {
+            /** @description Already completed for the current day (daily habits) or week (weekly habits), by the server's calendar, so a client never has to guess the date */
+            completedForPeriod: boolean;
             /** Format: date-time */
             createdAt?: string;
             /** Format: int32 */

@@ -24,6 +24,9 @@ public record HabitResponse(
         @Schema(requiredMode = REQUIRED) Habit.GoalPeriod goalPeriod,
         @Schema(requiredMode = REQUIRED, description = "Completions so far in the current goal period") int progressCount,
         @Schema(requiredMode = REQUIRED) int progressTargetCount,
+        @Schema(requiredMode = REQUIRED, description = "Already completed for the current day (daily habits) or week "
+                + "(weekly habits), by the server's calendar, so a client never has to guess the date")
+        boolean completedForPeriod,
         @Schema(requiredMode = REQUIRED) int xpTotal,
         @Schema(requiredMode = REQUIRED) int currentStreak,
         @Schema(requiredMode = REQUIRED) int longestStreak,
@@ -31,7 +34,7 @@ public record HabitResponse(
         OffsetDateTime createdAt
 ) {
 
-    public static HabitResponse from(Habit habit, int progressCount) {
+    public static HabitResponse from(Habit habit, int progressCount, boolean completedForPeriod) {
         return new HabitResponse(
                 habit.getId(),
                 habit.getName(),
@@ -41,6 +44,7 @@ public record HabitResponse(
                 habit.getGoalPeriod(),
                 progressCount,
                 habit.getGoalTargetCount(),
+                completedForPeriod,
                 habit.getXpTotal(),
                 habit.getCurrentStreak(),
                 habit.getLongestStreak(),

@@ -186,6 +186,6 @@ public class HabitController {
             progressCount = habitEntryRepository.findByHabitAndCompletedDate(habit, today).isPresent() ? 1 : 0;
         }
 
-        return HabitResponse.from(habit, progressCount);
+        return HabitResponse.from(habit, progressCount, habitProgressService.alreadyCompletedForPeriod(habit, today));
     }
 }

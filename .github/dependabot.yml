@@ -1,6 +1,10 @@
 # Weekly dependency update pull requests. Minor and patch updates are grouped into one PR per
-# ecosystem so they arrive together; CI checks each one. Major versions (Spring Boot 4, a new
-# Java base image, React 20, ...) are left out on purpose: those are planned upgrades, not chores.
+# ecosystem so they arrive together; CI checks each one. Major versions (Spring Boot 4, React 20,
+# a new AWS provider, ...) are left out on purpose: those are planned upgrades, not chores.
+#
+# Docker base images are not listed: the Dockerfiles use floating tags on the Java 17 line
+# (eclipse-temurin:17-jre, maven:3.9-eclipse-temurin-17), so every build already gets their
+# patches, and Dependabot can only propose changing the Java version hidden in the tag suffix.
 version: 2
 updates:
   - package-ecosystem: maven
@@ -29,16 +33,6 @@ updates:
       - dependency-name: "*"
         update-types: [version-update:semver-major]
 
-  - package-ecosystem: docker
-    directories:
-      - /backend/progresstracker
-      - /backend/progress-worker
-    schedule:
-      interval: weekly
-    ignore:
-      - dependency-name: "*"
-        update-types: [version-update:semver-major]
-
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -51,3 +45,6 @@ updates:
     directory: /infra/terraform
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]

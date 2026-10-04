@@ -1,49 +1,83 @@
-# Progress Tracker
+# ProgressArc
 
 [![CI](https://github.com/andrewwsou/progress-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/andrewwsou/progress-tracker/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/andrewwsou/progress-tracker/actions/workflows/codeql.yml/badge.svg)](https://github.com/andrewwsou/progress-tracker/actions/workflows/codeql.yml)
 
-A habit-tracking app with streaks, XP, and achievements, built to demonstrate an event-driven
-backend: habit completions are recorded synchronously but rewarded (streaks/XP/achievements)
-asynchronously via a queue-backed worker service, so the API response never waits on reward
-computation.
+A habit tracker with streaks, XP, achievements, and weekly summaries, built to show how an
+event-driven backend stays correct under load. Completing a habit is recorded in the request;
+the reward is applied by a separate worker through a queue, exactly once, even when a message is
+delivered twice, out of order, or after the worker crashes.
+
+![The ProgressArc dashboard: habits with streaks and XP, an overview, the weekly summary, and achievements](docs/dashboard.png)
+
+## Highlights
+
+- **Exactly-once rewards over at-least-once delivery.** A transactional outbox in the API and an
+  idempotent consumer in the worker (a processed-event table and a per-user row lock). At 100
+  completions per second, with the worker killed and the queue frozen mid-run, no request failed
+  and every completion was rewarded exactly once.
+- **Correct under contention.** 8,000 requests completing the same habit, up to 1,000 in flight
+  at once, all succeeded, with one completion and one reward recorded.
+- **Measured, then optimised.** A k6 harness checks the database after every run. It led to a
+  window-function streak query and fewer achievement queries (77.6 ms to 6.0 ms per reward for a
+  365-day streak), a set-based nightly job (5.1 s to 0.2 s over 20,000 habits), and a concurrent
+  worker with backpressure (242 to 650 events/s).
+- **Operable.** Graceful shutdown, health checks, Prometheus metrics, dead-letter queue alarms
+  defined in Terraform, and Flyway migrations that both services validate against at startup.
+- **An LLM feature with guardrails.** Weekly summaries written through the Claude API with
+  structured output, checks that reject invented habits or numbers, a template fallback, and hard
+  daily cost caps. Off unless explicitly enabled; the tests run it against a WireMock stand-in.
+- **Tested in CI.** 190+ unit and integration tests (Testcontainers with PostgreSQL and an
+  SQS-compatible broker), coverage gates, an OpenAPI contract check, an end-to-end Docker Compose
+  run, CodeQL, and Dependabot.
+
+Every load-test number above comes from a script in this repository; see [load/RESULTS.md](load/RESULTS.md).
 
 ## Architecture
 
-```
-                 ┌─────────────┐        1. one transaction: completion row
-  React client ─▶│  API        │           + outbox event ─────────┐
-  (Vite, :5173)  │  (Spring    │        2. return                  ▼
-                 │   Boot,     │           immediately        ┌──────────┐
-                 │   :8080)    │◀──────────────────────────── │ Postgres │
-                 └──────┬──────┘                              └──────────┘
-                        │ 3. outbox relay publishes                 ▲
-                        │    unpublished events (timer,             │
-                        ▼    off the request path)                  │
-                 ┌─────────────┐                                    │
-                 │   AWS SQS   │                                    │
-                 └──────┬──────┘                                    │
-                        │ 4. long-poll                              │
-                        ▼                                           │
-                 ┌─────────────┐        5. one transaction: record  │
-                 │   Worker    │           the event id, lock the   │
-                 │  (Spring    │           user, compute streak/XP/ │
-                 │   Boot,     │           achievements ────────────┘
-                 │   8 threads)│
-                 └─────────────┘────────▶ 6. queue completion email (SES/log)
+```mermaid
+flowchart LR
+    UI["React client"] -->|"REST + JWT"| API["API<br/>Spring Boot"]
+    API -->|"completion + outbox event,<br/>one transaction"| DB[("PostgreSQL")]
+    API -->|"relay publishes events"| Q[["SQS<br/>+ dead-letter queue"]]
+    Q -->|"long poll"| W["Worker<br/>Spring Boot, 8 threads"]
+    W -->|"reward, exactly once:<br/>XP, streak, achievements"| DB
+    W -.->|"weekly summaries, opt-in"| LLM["Claude API"]
+    EB["EventBridge + Lambda"] -->|"nightly streak reset,<br/>weekly summary requests"| API
 ```
 
-**Why:** moving reward computation off the request thread keeps the API fast under load and
-lets it fail independently of the worker. Both services can also run in a **fully synchronous,
-AWS-free mode** for local development (see below).
+The API never waits for the reward or for the queue: a completion and its event are written in
+one transaction and the request returns. A relay publishes the event, and the worker computes
+the streak, XP, and achievements. The API can also run fully synchronously, with no queue or AWS
+at all, which is the default for local development.
 
-## Services
-
-| Service | Path | Stack |
+| Part | Path | Stack |
 |---|---|---|
-| API | `backend/progresstracker` | Spring Boot 3.5 (Java 17), Spring Security + JWT, JPA/Hibernate, PostgreSQL, Flyway migrations |
-| Worker | `backend/progress-worker` | Spring Boot 3.5 (Java 17), JPA/Hibernate, PostgreSQL, AWS SQS long-polling, Actuator + Micrometer/Prometheus (`:8081`) |
-| Frontend | `frontend` | React 19 + Vite |
+| API | `backend/progresstracker` | Spring Boot 3.5 (Java 17), Spring Security + JWT, JPA/Hibernate, PostgreSQL, Flyway |
+| Worker | `backend/progress-worker` | Spring Boot 3.5 (Java 17), AWS SQS, JPA/Hibernate, Actuator, Micrometer/Prometheus, Claude API |
+| Frontend | `frontend` | React 19, TypeScript, Vite; API types generated from the OpenAPI contract |
+| Infrastructure | `infra` | Terraform (SQS, dead-letter queue, alarms, EventBridge, Lambda), Python Lambda handlers |
+| Load tests | `load` | k6 in Docker Compose, with SQL checks after every scenario |
+
+## Quick start
+
+Needs Docker; the smoke test also needs `bash`, `curl`, and `jq`, and the UI needs Node 20.19+ or 22.12+.
+
+```
+docker compose up --build --wait            # API, worker, PostgreSQL, local SQS; returns once healthy
+./scripts/smoke-test.sh                     # register, complete a habit, wait for the worker's reward
+cd frontend && npm install && npm run dev   # the UI on http://localhost:5173
+docker compose down -v                      # stop and delete the data
+```
+
+The API listens on `http://localhost:8080` (loopback only). If that port is taken, start the
+stack with `API_PORT=8081`, run the smoke test with `BASE_URL=http://localhost:8081`, and start the
+UI with `VITE_API_URL=http://localhost:8081`.
+Nothing in this stack talks to AWS: the queue is
+[ElasticMQ](https://github.com/softwaremill/elasticmq), configured in
+[`infra/local/elasticmq.conf`](infra/local/elasticmq.conf) with the same dead-letter policy as
+the Terraform in `infra/terraform/sqs.tf`. The services reach it through `QUEUE_ENDPOINT_OVERRIDE`,
+which is left blank in production so the AWS SDK resolves the real SQS endpoint.
 
 ## Endpoints (API)
 
@@ -156,25 +190,6 @@ locally against real Postgres:
 thread. The transactional outbox added later puts one more insert in the async request's
 transaction; measured before and after that change, the async figure did not move.
 
-## Running with Docker
-
-The quickest way to see the whole pipeline work. Running the stack requires only Docker; the
-smoke test also needs `bash`, `curl`, and `jq`.
-
-```
-docker compose up --build --wait   # API, worker, PostgreSQL, and a local SQS-compatible broker; returns once healthy
-./scripts/smoke-test.sh            # register -> create habit -> complete -> wait for the worker's reward
-docker compose down -v             # stop and delete the data
-```
-
-The API listens on `http://localhost:8080` (loopback only). If that port is taken, start the
-stack with `API_PORT=8081` and run the smoke test with `BASE_URL=http://localhost:8081`.
-Nothing in this stack talks to AWS: the queue is
-[ElasticMQ](https://github.com/softwaremill/elasticmq), configured in
-[`infra/local/elasticmq.conf`](infra/local/elasticmq.conf) with the same dead-letter policy as
-the Terraform in `infra/terraform/sqs.tf`. The services reach it through `QUEUE_ENDPOINT_OVERRIDE`,
-which is left blank in production so the AWS SDK resolves the real SQS endpoint.
-
 ## Running locally
 
 Requires Postgres 14+, Java 17, and Node 20.19+ (or 22.12+).
@@ -184,7 +199,7 @@ Requires Postgres 14+, Java 17, and Node 20.19+ (or 22.12+).
    createuser ptrack --pwprompt   # password: ptrack
    createdb progresstracker -O ptrack
    ```
-2. **API** (from `backend/progresstracker`)
+2. **API** (from `backend/progresstracker`). It creates the schema on startup, so start it before the worker.
    ```
    export JWT_SECRET=$(openssl rand -base64 48)
    ./mvnw spring-boot:run
@@ -274,7 +289,7 @@ pull request and every push to `main`, along with a JaCoCo line-coverage gate, t
 [CodeQL](.github/workflows/codeql.yml) scans the Java, TypeScript, and Python code and the workflows
 themselves for security bugs on every pull request and weekly, and
 [Dependabot](.github/dependabot.yml) opens weekly pull requests for minor and patch dependency
-updates (Maven, npm, Docker base images, GitHub Actions, Terraform providers), which CI then checks.
+updates (Maven, npm, GitHub Actions, Terraform providers), which CI then checks.
 
 ## Load tests
 

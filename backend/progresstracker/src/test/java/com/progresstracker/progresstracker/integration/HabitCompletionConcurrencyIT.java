@@ -4,6 +4,7 @@ import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.repository.HabitRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpMethod;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.TestPropertySource;
@@ -49,6 +50,18 @@ class HabitCompletionConcurrencyIT extends IntegrationTestBase {
         assertThat(habit.get("xp_total")).isEqualTo(10);
         assertThat(habit.get("current_streak")).isEqualTo(1);
         assertThat(habit.get("longest_streak")).isEqualTo(1);
+    }
+
+    @Test
+    void aHabitReportsWhetherItIsAlreadyDoneForTodayByTheServersCalendar() {
+        String token = registerUser(uniqueEmail());
+        long habitId = createDailyHabit(token, "Read");
+        assertThat(send(HttpMethod.GET, "/api/habits", token, null).getBody().get(0).get("completedForPeriod").asBoolean())
+                .isFalse();
+
+        assertThat(completeHabit(token, habitId).getBody().get("completedForPeriod").asBoolean()).isTrue();
+        assertThat(send(HttpMethod.GET, "/api/habits", token, null).getBody().get(0).get("completedForPeriod").asBoolean())
+                .isTrue();
     }
 
     @Test
