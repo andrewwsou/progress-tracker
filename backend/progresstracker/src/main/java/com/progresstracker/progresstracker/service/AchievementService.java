@@ -15,6 +15,7 @@ import com.progresstracker.progresstracker.dto.UserAchievementDto;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -135,7 +136,7 @@ public class AchievementService {
                         ua.getAchievement().getDescription(),// description
                         ua.getAchievement().getThreshold(),  // threshold
                         ua.getAchievement().getType(),       // type
-                        ua.getUnlockedAt()                   // unlockedAt
+                        ua.getUnlockedAt().atZone(ZoneId.systemDefault()).toOffsetDateTime() // unlockedAt
                 ))
                 .toList();
     }

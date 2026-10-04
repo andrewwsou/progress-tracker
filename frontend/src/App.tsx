@@ -31,9 +31,9 @@ function App() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [frequency, setFrequency] = useState("DAILY");
+  const [frequency, setFrequency] = useState<Habit["frequency"]>("DAILY");
   const [goalTargetCount, setGoalTargetCount] = useState("1");
-  const [goalPeriod, setGoalPeriod] = useState("DAILY");
+  const [goalPeriod, setGoalPeriod] = useState<Habit["goalPeriod"]>("DAILY");
 
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -69,8 +69,8 @@ function App() {
       localStorage.setItem("token", newToken);
       setToken(newToken);
       setPassword("");
-    } catch (err: any) {
-      setAuthError(err.message || "Authentication failed");
+    } catch (err) {
+      setAuthError(err instanceof Error && err.message ? err.message : "Authentication failed");
     }
   }
 
@@ -118,7 +118,7 @@ function App() {
   function startEditHabit(h: Habit) {
     setEditingId(h.id);
     setName(h.name);
-    setDescription(h.description);
+    setDescription(h.description ?? "");
     setFrequency(h.frequency);
     setGoalTargetCount(String(h.goalTargetCount ?? 1));
     setGoalPeriod(h.goalPeriod ?? (h.frequency === "WEEKLY" ? "WEEKLY" : "DAILY"));
@@ -191,8 +191,8 @@ function App() {
         <h2>{editingId ? "Edit Habit" : "Add Habit"}</h2>
 
         <form onSubmit={handleSubmitHabit} style={{ display: "grid", gap: "0.5rem", maxWidth: 720 }}>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Habit name" />
-          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Habit name" maxLength={100} />
+          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" maxLength={255} />
 
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             <label style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
@@ -200,7 +200,7 @@ function App() {
               <select
                 value={frequency}
                 onChange={(e) => {
-                  const next = e.target.value;
+                  const next = e.target.value as Habit["frequency"];
                   setFrequency(next);
                   setGoalPeriod(next === "WEEKLY" ? "WEEKLY" : "DAILY");
                 }}
@@ -224,7 +224,7 @@ function App() {
 
             <label style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
               Per
-              <select value={goalPeriod} onChange={(e) => setGoalPeriod(e.target.value)}>
+              <select value={goalPeriod} onChange={(e) => setGoalPeriod(e.target.value as Habit["goalPeriod"])}>
                 <option value="DAILY">Day</option>
                 <option value="WEEKLY">Week</option>
               </select>

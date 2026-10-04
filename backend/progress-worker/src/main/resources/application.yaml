@@ -1,11 +1,13 @@
+# All deployment-specific values come from environment variables (see .env.example).
+# Defaults are for local development only.
 spring:
   application:
     name: progress-worker
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/progresstracker
-    username: ptrack
-    password: ptrack
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/progresstracker}
+    username: ${DB_USERNAME:ptrack}
+    password: ${DB_PASSWORD:ptrack}
 
   jpa:
     hibernate:
@@ -16,9 +18,12 @@ spring:
         format_sql: true
 
 queue:
-  enabled: true
-  awsRegion: us-west-1
-  sqsUrl: "https://sqs.us-west-1.amazonaws.com/648093549515/progresstracker-completions"
+  # The worker only polls when this is true and QUEUE_SQS_URL is set.
+  enabled: ${QUEUE_ENABLED:false}
+  awsRegion: ${AWS_REGION:us-west-1}
+  sqsUrl: ${QUEUE_SQS_URL:}
+  # Leave blank for real AWS. Set to reach a local SQS-compatible broker.
+  endpointOverride: ${QUEUE_ENDPOINT_OVERRIDE:}
 
 worker:
   enabled: true

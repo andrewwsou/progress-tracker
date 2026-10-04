@@ -1,0 +1,67 @@
+# The whole backend on one machine: API, worker, PostgreSQL, and an SQS-compatible broker.
+#
+#   docker compose up --build --wait start everything and wait until healthy (API on http://localhost:8080)
+#   ./scripts/smoke-test.sh          prove a completion flows API -> queue -> worker -> database
+#   docker compose down -v           stop and delete the data
+#
+# Nothing here talks to AWS. Every credential below is a local-only placeholder.
+name: progress-tracker
+
+x-backend-environment: &backend-environment
+  DB_URL: jdbc:postgresql://postgres:5432/progresstracker
+  DB_USERNAME: ptrack
+  DB_PASSWORD: ptrack
+  QUEUE_ENABLED: "true"
+  QUEUE_SQS_URL: http://sqs:9324/000000000000/progresstracker-completions
+  QUEUE_ENDPOINT_OVERRIDE: http://sqs:9324
+  AWS_REGION: us-west-1
+  AWS_ACCESS_KEY_ID: local
+  AWS_SECRET_ACCESS_KEY: local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: progresstracker
+      POSTGRES_USER: ptrack
+      POSTGRES_PASSWORD: ptrack
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ptrack -d progresstracker"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  sqs:
+    image: softwaremill/elasticmq-native:1.7.1
+    volumes:
+      - ./infra/local/elasticmq.conf:/opt/elasticmq.conf:ro
+
+  api:
+    build: ./backend/progresstracker
+    environment:
+      <<: *backend-environment
+      JWT_SECRET: ${JWT_SECRET:-local-development-only-secret-not-for-production}
+    ports:
+      # Loopback only: this stack signs tokens with a placeholder secret and is for local use.
+      # If you change the port, run the smoke test with BASE_URL=http://localhost:<port>.
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sqs:
+        condition: service_started
+
+  worker:
+    build: ./backend/progress-worker
+    environment: *backend-environment
+    depends_on:
+      # The API creates the database schema on startup, so the worker waits for it.
+      api:
+        condition: service_healthy
+      sqs:
+        condition: service_started
+
+volumes:
+  postgres-data:

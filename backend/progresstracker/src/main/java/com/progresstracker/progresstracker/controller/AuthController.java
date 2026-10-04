@@ -6,7 +6,15 @@ import com.progresstracker.progresstracker.dto.RegisterRequest;
 import com.progresstracker.progresstracker.model.User;
 import com.progresstracker.progresstracker.repository.UserRepository;
 import com.progresstracker.progresstracker.security.JwtService;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -14,6 +22,8 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/auth")
 @CrossOrigin(origins = "http://localhost:5173")
+@Tag(name = "Authentication")
+@SecurityRequirements // these endpoints are public: no bearer token needed
 public class AuthController {
 
     private final UserRepository userRepository;
@@ -29,38 +39,36 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public AuthResponse register(@RequestBody RegisterRequest request) {
-        if (request.getEmail() == null || request.getPassword() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email and password are required");
-        }
-
-        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+    @ApiResponse(responseCode = "200", description = "Registered; returns a bearer token")
+    @ApiResponse(responseCode = "409", description = "Email already used",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public AuthResponse register(@Valid @RequestBody RegisterRequest request) {
+        if (userRepository.findByEmail(request.email()).isPresent()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Email already used");
         }
 
-        String hash = passwordEncoder.encode(request.getPassword());
-        User user = new User(request.getEmail(), hash);
+        String hash = passwordEncoder.encode(request.password());
+        User user = new User(request.email(), hash);
         userRepository.save(user);
 
-        String token = jwtService.generateToken(user.getEmail());
-        return new AuthResponse(token);
+        return new AuthResponse(jwtService.generateToken(user.getEmail()));
     }
 
     @PostMapping("/login")
-    public AuthResponse login(@RequestBody LoginRequest request) {
-        if (request.getEmail() == null || request.getPassword() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email and password are required");
-        }
-
-        User user = userRepository.findByEmail(request.getEmail())
+    @ApiResponse(responseCode = "200", description = "Logged in; returns a bearer token")
+    @ApiResponse(responseCode = "401", description = "Invalid credentials",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public AuthResponse login(@Valid @RequestBody LoginRequest request) {
+        User user = userRepository.findByEmail(request.email())
                 .orElseThrow(() ->
                         new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+        if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
 
-        String token = jwtService.generateToken(user.getEmail());
-        return new AuthResponse(token);
+        return new AuthResponse(jwtService.generateToken(user.getEmail()));
     }
 }

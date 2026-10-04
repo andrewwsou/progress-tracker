@@ -1,19 +1,8 @@
 package com.progresstracker.progresstracker.dto;
 
-public class AuthResponse {
-    private String token;
+import io.swagger.v3.oas.annotations.media.Schema;
 
-    public AuthResponse() {}
+import static io.swagger.v3.oas.annotations.media.Schema.RequiredMode.REQUIRED;
 
-    public AuthResponse(String token) {
-        this.token = token;
-    }
-
-    public String getToken() {
-        return token;
-    }
-
-    public void setToken(String token) {
-        this.token = token;
-    }
+public record AuthResponse(@Schema(requiredMode = REQUIRED) String token) {
 }

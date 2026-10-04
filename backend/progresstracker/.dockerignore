@@ -1,0 +1,12 @@
+# Keep the build context small and keep local secrets out of it.
+target/
+.idea/
+*.iml
+.mvn/
+mvnw
+mvnw.cmd
+HELP.md
+env
+.env
+.env.*
+.DS_Store

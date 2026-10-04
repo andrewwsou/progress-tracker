@@ -1,24 +1,17 @@
 package com.progresstracker.progresstracker.dto;
 
-public class RegisterRequest {
-    private String email;
-    private String password;
+import com.progresstracker.progresstracker.dto.validation.MaxUtf8Bytes;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
-    public RegisterRequest() {}
-
-    public String getEmail() {
-        return email;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setEmail(String email) {
-        this.email = email;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
-    }
+public record RegisterRequest(
+        @NotBlank @Email @Size(min = 1, max = 255) String email,
+        // bcrypt refuses anything over 72 bytes, and a non-ASCII character is more than one byte,
+        // so the byte limit is checked as well as the character count.
+        @NotBlank
+        @Size(min = 8, max = 72, message = "must be between 8 and 72 characters")
+        @MaxUtf8Bytes(72)
+        String password
+) {
 }

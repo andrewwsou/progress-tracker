@@ -12,10 +12,12 @@ import org.springframework.stereotype.Component;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.SqsClientBuilder;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,8 +39,13 @@ public class SqsPoller {
     @Value("${queue.sqsUrl:}")
     private String sqsUrl;
 
-    @Value("${queue.awsRegion:us-west-2}")
+    @Value("${queue.awsRegion:us-west-1}")
     private String awsRegion;
+
+    // Blank in production (the SDK resolves the real AWS endpoint). Set it to point the
+    // client at a local SQS-compatible broker in integration tests and Docker Compose.
+    @Value("${queue.endpointOverride:}")
+    private String endpointOverride;
 
     @Value("${worker.waitTimeSeconds:20}")
     private int waitTimeSeconds;
@@ -69,13 +76,16 @@ public class SqsPoller {
             return;
         }
         if (sqsUrl == null || sqsUrl.isBlank()) {
-            throw new IllegalStateException("queue.sqsUrl must be set");
+            throw new IllegalStateException("QUEUE_SQS_URL must be set when QUEUE_ENABLED=true");
         }
 
-        this.sqsClient = SqsClient.builder()
+        SqsClientBuilder builder = SqsClient.builder()
                 .region(Region.of(awsRegion))
-                .credentialsProvider(DefaultCredentialsProvider.create())
-                .build();
+                .credentialsProvider(DefaultCredentialsProvider.create());
+        if (endpointOverride != null && !endpointOverride.isBlank()) {
+            builder.endpointOverride(parseEndpoint(endpointOverride));
+        }
+        this.sqsClient = builder.build();
 
         running.set(true);
         loopThread = new Thread(this::pollLoop, "sqs-poller");
@@ -83,6 +93,20 @@ public class SqsPoller {
 
         loopThread.start();
         log.info("SQS poller started");
+    }
+
+    private static URI parseEndpoint(String value) {
+        try {
+            URI uri = URI.create(value.strip());
+            boolean http = "http".equals(uri.getScheme()) || "https".equals(uri.getScheme());
+            if (http && uri.getHost() != null) {
+                return uri;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // reported below
+        }
+        throw new IllegalStateException(
+                "QUEUE_ENDPOINT_OVERRIDE must be an absolute http(s) URL such as http://localhost:9324, but was: " + value);
     }
 
     private void pollLoop() {
@@ -107,6 +131,11 @@ public class SqsPoller {
     }
 
     private void handleMessage(Message message) {
+        long userId;
+        long habitId;
+        LocalDate date;
+
+        // Schema errors can never succeed on retry, so these are poison messages: delete them.
         try {
             JsonNode node = objectMapper.readTree(message.body());
 
@@ -119,25 +148,32 @@ public class SqsPoller {
                     ? node.get("date").asText()
                     : node.path("completedDate").asText(null);
 
-            // Validate
             if (userIdNode.isMissingNode() || habitIdNode.isMissingNode() || dateStr == null || dateStr.isBlank()) {
                 log.error("Invalid message schema (deleting message): {}", message.body());
-                delete(message); // dev-friendly: don't poison the queue
+                delete(message);
                 return;
             }
 
-            long userId = userIdNode.asLong();
-            long habitId = habitIdNode.asLong();
-            LocalDate date = LocalDate.parse(dateStr);
+            userId = userIdNode.asLong();
+            habitId = habitIdNode.asLong();
+            date = LocalDate.parse(dateStr);
+        } catch (Exception e) {
+            log.error("Unparseable message (deleting message): {}", message.body(), e);
+            delete(message);
+            return;
+        }
 
+        // Processing failures (DB blips, transient errors) are different: leave the message
+        // alone so SQS redelivers it after the visibility timeout expires. This is safe because
+        // CompletionProcessor.process() is idempotent per (habit, date) - a retried delivery
+        // either finishes the original attempt or is a no-op, never a duplicate reward.
+        try {
             completionProcessor.process(userId, habitId, date);
-
             delete(message);
             log.info("Processed completion userId={} habitId={} date={}", userId, habitId, date);
-
         } catch (Exception e) {
-            log.error("Failed processing message (deleting message to avoid retry poison): {}", message.body(), e);
-            delete(message); // dev-friendly; for prod you'd DLQ instead
+            log.error("Failed processing completion userId={} habitId={} date={} (leaving message for retry): {}",
+                    userId, habitId, date, e.getMessage(), e);
         }
     }
 

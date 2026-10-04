@@ -48,12 +48,6 @@ public class Habit {
     @Enumerated(EnumType.STRING)
     private GoalPeriod goalPeriod;
 
-    @Transient
-    private Integer progressCount;
-
-    @Transient
-    private Integer progressTargetCount;
-
     public Habit() {
     }
 
@@ -161,19 +155,4 @@ public class Habit {
         this.goalPeriod = goalPeriod;
     }
 
-    public Integer getProgressCount() {
-        return progressCount;
-    }
-
-    public void setProgressCount(Integer progressCount) {
-        this.progressCount = progressCount;
-    }
-
-    public Integer getProgressTargetCount() {
-        return progressTargetCount;
-    }
-
-    public void setProgressTargetCount(Integer progressTargetCount) {
-        this.progressTargetCount = progressTargetCount;
-    }
 }

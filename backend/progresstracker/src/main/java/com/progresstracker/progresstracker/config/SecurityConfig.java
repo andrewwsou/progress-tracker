@@ -1,5 +1,6 @@
 package com.progresstracker.progresstracker.config;
 
+import com.progresstracker.progresstracker.security.BearerAuthenticationEntryPoint;
 import com.progresstracker.progresstracker.security.JwtAuthFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,9 +21,11 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final BearerAuthenticationEntryPoint authenticationEntryPoint;
 
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter) {
+    public SecurityConfig(JwtAuthFilter jwtAuthFilter, BearerAuthenticationEntryPoint authenticationEntryPoint) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.authenticationEntryPoint = authenticationEntryPoint;
     }
 
     @Bean
@@ -32,9 +35,21 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(sm ->
                         sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // No valid token: answer 401, not Spring Security's default 403.
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(authenticationEntryPoint))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
+                        // Liveness probe for containers and load balancers. Exposes status only.
+                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                        // The API contract and its browsable UI.
+                        .requestMatchers("/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**").permitAll()
+                        // Authorized via X-Internal-Token in AutomationController, not JWT.
+                        .requestMatchers("/api/internal/**").permitAll()
+                        // Errors that fall through to Boot's /error page are re-dispatched through
+                        // this chain without the JWT filter, so /error must be reachable or the
+                        // real status would be replaced by a 401.
+                        .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

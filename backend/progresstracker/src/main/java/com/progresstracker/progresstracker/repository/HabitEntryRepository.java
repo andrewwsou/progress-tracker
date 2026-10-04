@@ -17,6 +17,12 @@ public interface HabitEntryRepository extends JpaRepository<HabitEntry, Long> {
 
     long countByHabitAndCompletedDateBetween(Habit habit, LocalDate startInclusive, LocalDate endInclusive);
 
+    @Query("select coalesce(sum(he.xpEarned), 0) from HabitEntry he " +
+            "where he.habit = :habit and he.completedDate between :startInclusive and :endInclusive")
+    long sumXpByHabitAndCompletedDateBetween(@Param("habit") Habit habit,
+                                              @Param("startInclusive") LocalDate startInclusive,
+                                              @Param("endInclusive") LocalDate endInclusive);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Transactional
     @Query("delete from HabitEntry he where he.habit.id = :habitId")

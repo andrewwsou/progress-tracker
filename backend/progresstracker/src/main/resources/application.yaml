@@ -1,11 +1,13 @@
+# All deployment-specific values come from environment variables (see .env.example).
+# Defaults are for local development only.
 spring:
   application:
     name: Progress Tracker
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/progresstracker
-    username: ptrack
-    password: ptrack
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/progresstracker}
+    username: ${DB_USERNAME:ptrack}
+    password: ${DB_PASSWORD:ptrack}
 
   jpa:
     hibernate:
@@ -18,8 +20,25 @@ spring:
 server:
   port: 8080
 
-queue:
-  enabled: true
-  awsRegion: us-west-1
-  sqsUrl: "https://sqs.us-west-1.amazonaws.com/648093549515/progresstracker-completions"
+jwt:
+  # Required. At least 32 bytes. The API refuses to start without it.
+  secret: ${JWT_SECRET:}
 
+queue:
+  # false = rewards computed inline (no AWS needed). true = async via SQS.
+  enabled: ${QUEUE_ENABLED:false}
+  awsRegion: ${AWS_REGION:us-west-1}
+  sqsUrl: ${QUEUE_SQS_URL:}
+  # Leave blank for real AWS. Set to reach a local SQS-compatible broker.
+  endpointOverride: ${QUEUE_ENDPOINT_OVERRIDE:}
+
+springdoc:
+  # The scheduled-job endpoints are internal (shared-token auth), not part of the public contract.
+  paths-to-exclude: /api/internal/**
+  # Stable key order, so the committed openapi.json only changes when the API does.
+  writer-with-order-by-keys: true
+  default-produces-media-type: application/json
+
+automation:
+  # Shared secret the scheduled Lambdas send as X-Internal-Token. Blank = endpoints locked.
+  internal-token: ${AUTOMATION_TOKEN:}

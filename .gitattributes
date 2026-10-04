@@ -1,2 +1,8 @@
-/mvnw text eol=lf
+# Shell scripts must keep LF endings or they fail on a Windows checkout.
+mvnw text eol=lf
+*.sh text eol=lf
 *.cmd text eol=crlf
+
+# Generated files are written with LF and compared in CI, so keep them LF everywhere.
+openapi.json text eol=lf
+frontend/src/api-types.ts text eol=lf

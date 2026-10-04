@@ -78,7 +78,7 @@ public class HabitProgressService {
         return habit;
     }
 
-    private boolean alreadyCompletedForPeriod(Habit habit, LocalDate today) {
+    public boolean alreadyCompletedForPeriod(Habit habit, LocalDate today) {
         if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
             LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
             LocalDate end = start.plusDays(6);

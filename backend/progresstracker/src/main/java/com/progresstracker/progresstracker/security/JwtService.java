@@ -4,6 +4,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -13,28 +14,32 @@ import java.util.Date;
 @Service
 public class JwtService {
 
-    private static final String SECRET = "super-secret-habithero-key-32-bytes-long!!";
+    // HS256 needs a key of at least 256 bits.
+    private static final int MIN_SECRET_BYTES = 32;
 
     private final Key key;
     private final long expirationMs = 1000L * 60 * 60 * 24;
 
-    public JwtService() {
-        this.key = Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8));
+    public JwtService(@Value("${jwt.secret:}") String secret) {
+        byte[] secretBytes = secret == null ? new byte[0] : secret.getBytes(StandardCharsets.UTF_8);
+        if (secretBytes.length < MIN_SECRET_BYTES) {
+            throw new IllegalStateException(
+                    "JWT_SECRET must be set to at least " + MIN_SECRET_BYTES
+                            + " bytes (generate one with: openssl rand -base64 48)");
+        }
+        this.key = Keys.hmacShaKeyFor(secretBytes);
     }
 
     public String generateToken(String email) {
         Date now = new Date();
         Date exp = new Date(now.getTime() + expirationMs);
 
-        String token = Jwts.builder()
+        return Jwts.builder()
                 .setSubject(email)
                 .setIssuedAt(now)
                 .setExpiration(exp)
                 .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
-
-        System.out.println("GENERATED TOKEN for " + email + ": " + token.substring(0, 30) + "...");
-        return token;
     }
 
     public String extractEmail(String token) {

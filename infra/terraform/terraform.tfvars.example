@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (gitignored) and fill in real values before
+# running plan/apply. Never commit the real automation_token.
+
+aws_region       = "us-west-1"
+environment      = "dev"
+api_base_url     = "https://api.progresstracker.example.com"
+automation_token = "CHANGE_ME"
