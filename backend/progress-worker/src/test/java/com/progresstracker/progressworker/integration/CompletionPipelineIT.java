@@ -1,18 +1,10 @@
 package com.progresstracker.progressworker.integration;
 
-import com.progresstracker.progressworker.service.EmailService;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -26,51 +18,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * Runs the real worker (poller thread, AWS SDK client, JPA) against PostgreSQL and an
- * SQS-compatible broker in Docker, and checks what it does to the database for each kind
- * of message the queue can hand it: a normal event, duplicates, garbage, and failures.
+ * What the worker does to the database for each kind of message the queue can hand it:
+ * a normal event, duplicates, garbage, and failures.
  */
-@SpringBootTest
-class CompletionPipelineIT {
-
-    /** Same value as the production queue's redrive policy in infra/terraform/sqs.tf. */
-    private static final int MAX_RECEIVE_COUNT = 5;
-
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
-
-    private static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"));
-
-    private static final String DEAD_LETTER_QUEUE_URL;
-    private static final String QUEUE_URL;
-
-    static {
-        POSTGRES.start();
-        String suffix = UUID.randomUUID().toString();
-        DEAD_LETTER_QUEUE_URL = LocalSqs.createQueue("completions-dlq-" + suffix);
-        QUEUE_URL = LocalSqs.createQueueWithDeadLetter("completions-" + suffix, DEAD_LETTER_QUEUE_URL, MAX_RECEIVE_COUNT);
-    }
-
-    @DynamicPropertySource
-    static void infrastructureProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
-
-        registry.add("queue.enabled", () -> "true");
-        registry.add("queue.sqsUrl", () -> QUEUE_URL);
-        registry.add("queue.endpointOverride", LocalSqs::endpoint);
-
-        // Short poll and visibility timeout so a failed message is redelivered in seconds.
-        registry.add("worker.waitTimeSeconds", () -> "1");
-        registry.add("worker.visibilityTimeoutSeconds", () -> "2");
-    }
-
-    @Autowired
-    private JdbcTemplate jdbc;
-
-    @MockitoSpyBean
-    private EmailService emailService;
+class CompletionPipelineIT extends WorkerIntegrationTestBase {
 
     @Test
     void grantsXpStreakAndFirstAchievementForACompletionEvent() {
@@ -85,6 +36,73 @@ class CompletionPipelineIT {
         assertThat(currentStreak(habitId)).isEqualTo(1);
         assertThat(xpEarned(habitId, today)).isEqualTo(10);
         assertThat(unlockedAchievements(userId)).containsExactly("FIRST_COMPLETION");
+    }
+
+    @Test
+    void recordsEachHandledEventWithWhenItHappenedAndWhenItWasProcessed() {
+        long userId = insertUser();
+        long habitId = insertHabit(userId);
+        LocalDate today = LocalDate.now();
+        insertEntry(habitId, today, 0);
+        UUID eventId = UUID.randomUUID();
+        // A fixed instant with an offset, so the check does not depend on any clock.
+        String occurredAt = "2026-01-15T08:30:00.123456+09:00";
+
+        LocalSqs.send(QUEUE_URL, "{\"eventId\":\"" + eventId + "\",\"userId\":" + userId + ",\"habitId\":" + habitId
+                + ",\"date\":\"" + today + "\",\"occurredAt\":\"" + occurredAt + "\"}");
+
+        await().atMost(TIMEOUT).untilAsserted(() -> assertThat(xpTotal(habitId)).isEqualTo(10));
+        // Both timestamps are stored, which is what lets "time from completion to reward" be queried.
+        Boolean recorded = jdbc.queryForObject(
+                "select occurred_at = cast(? as timestamptz) and processed_at is not null "
+                        + "from processed_events where event_id = ?",
+                Boolean.class, occurredAt, eventId);
+        assertThat(recorded).isTrue();
+    }
+
+    @Test
+    void anEventWithAnUnreadableIdOrTimestampIsStillRewarded() {
+        long userId = insertUser();
+        long habitId = insertHabit(userId);
+        LocalDate today = LocalDate.now();
+        insertEntry(habitId, today, 0);
+
+        // The user, habit and date are valid, so this is a real completion. Dropping it would
+        // lose the reward for good: the API has already marked the event as published.
+        LocalSqs.send(QUEUE_URL, "{\"eventId\":\"not-a-uuid\",\"userId\":" + userId + ",\"habitId\":" + habitId
+                + ",\"date\":\"" + today + "\",\"occurredAt\":1759556161}");
+
+        await().atMost(TIMEOUT).untilAsserted(() -> assertThat(xpTotal(habitId)).isEqualTo(10));
+        awaitQueueDrained();
+    }
+
+    @Test
+    void anEventForAHabitThatNoLongerExistsIsDroppedWithoutRetrying() {
+        long userId = insertUser();
+        long habitId = insertHabit(userId);
+        jdbc.update("delete from habit where id = ?", habitId); // deleted before the worker got to it
+        String event = event(userId, habitId, LocalDate.now());
+
+        LocalSqs.send(QUEUE_URL, event);
+
+        // Gone from the queue, and not because it was retried into the dead-letter queue.
+        awaitQueueDrained();
+        assertThat(LocalSqs.peekBodies(DEAD_LETTER_QUEUE_URL)).doesNotContain(event);
+    }
+
+    @Test
+    void stillHandlesMessagesSentBeforeEventsCarriedAnId() {
+        long userId = insertUser();
+        long habitId = insertHabit(userId);
+        LocalDate today = LocalDate.now();
+        insertEntry(habitId, today, 0);
+        String oldFormat = legacyEvent(userId, habitId, today);
+
+        LocalSqs.send(QUEUE_URL, oldFormat);
+        LocalSqs.send(QUEUE_URL, oldFormat);
+
+        awaitQueueDrained();
+        assertThat(xpTotal(habitId)).isEqualTo(10);
     }
 
     @Test
@@ -113,7 +131,7 @@ class CompletionPipelineIT {
         insertEntry(habitId, today, 0);
         String event = event(userId, habitId, today);
 
-        // SQS is at-least-once: the same event can arrive more than once.
+        // SQS is at-least-once: the same event (same id) can arrive more than once.
         LocalSqs.send(QUEUE_URL, event);
         LocalSqs.send(QUEUE_URL, event);
         LocalSqs.send(QUEUE_URL, event);
@@ -187,58 +205,18 @@ class CompletionPipelineIT {
 
     // --- helpers ---------------------------------------------------------------------------
 
+    /** A message as the API's outbox writes it. Each call is a new event with its own id. */
     private static String event(long userId, long habitId, LocalDate date) {
+        return "{\"eventId\":\"" + UUID.randomUUID() + "\",\"userId\":" + userId + ",\"habitId\":" + habitId
+                + ",\"date\":\"" + date + "\",\"occurredAt\":\"" + OffsetDateTime.now() + "\"}";
+    }
+
+    /** A message as it was sent before events carried an id. */
+    private static String legacyEvent(long userId, long habitId, LocalDate date) {
         return "{\"userId\":" + userId + ",\"habitId\":" + habitId + ",\"date\":\"" + date + "\"}";
     }
 
     private static void awaitQueueDrained() {
         await().atMost(TIMEOUT).until(() -> LocalSqs.isDrained(QUEUE_URL));
-    }
-
-    private long insertUser() {
-        return jdbc.queryForObject(
-                "insert into app_user (email, password_hash) values (?, 'not-a-real-hash') returning id",
-                Long.class,
-                "user-" + UUID.randomUUID() + "@example.com");
-    }
-
-    private long insertHabit(long userId) {
-        return jdbc.queryForObject(
-                "insert into habit (user_id, name, description, frequency, goal_period, goal_target_count, "
-                        + "xp_total, current_streak, longest_streak, created_at) "
-                        + "values (?, 'Read', '', 'DAILY', 'DAILY', 1, 0, 0, 0, now()) returning id",
-                Long.class,
-                userId);
-    }
-
-    private void insertEntry(long habitId, LocalDate date, int xpEarned) {
-        jdbc.update(
-                "insert into habit_entries (habit_id, completed_date, xp_earned, created_at) values (?, ?, ?, now())",
-                habitId, date, xpEarned);
-    }
-
-    private int xpTotal(long habitId) {
-        return jdbc.queryForObject("select xp_total from habit where id = ?", Integer.class, habitId);
-    }
-
-    private int currentStreak(long habitId) {
-        return jdbc.queryForObject("select current_streak from habit where id = ?", Integer.class, habitId);
-    }
-
-    private int xpEarned(long habitId, LocalDate date) {
-        return jdbc.queryForObject(
-                "select xp_earned from habit_entries where habit_id = ? and completed_date = ?",
-                Integer.class, habitId, date);
-    }
-
-    private int entryCount(long habitId) {
-        return jdbc.queryForObject("select count(*) from habit_entries where habit_id = ?", Integer.class, habitId);
-    }
-
-    private List<String> unlockedAchievements(long userId) {
-        return jdbc.queryForList(
-                "select a.code from user_achievement ua join achievement a on a.id = ua.achievement_id "
-                        + "where ua.user_id = ? order by a.code",
-                String.class, userId);
     }
 }

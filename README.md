@@ -10,25 +10,25 @@ computation.
 ## Architecture
 
 ```
-                 ┌─────────────┐        1. write completion event
-  React client ─▶│  API        │───────────────────────────┐
-  (Vite, :5173)  │  (Spring    │        2. return           ▼
-                 │   Boot,     │        immediately    ┌──────────┐
-                 │   :8080)    │◀───────────────────── │ Postgres │
-                 └──────┬──────┘                       └──────────┘
-                        │ 3. enqueue (background thread,               ▲
-                        │    off the request path)                     │
-                        ▼                                              │
-                 ┌─────────────┐                                       │
-                 │   AWS SQS   │                                       │
-                 └──────┬──────┘                                       │
-                        │ 4. long-poll                                 │
-                        ▼                                              │
-                 ┌─────────────┐        5. compute streak/XP/          │
-                 │   Worker    │           achievements, persist ──────┘
-                 │  (Spring    │
-                 │   Boot)     │────────▶ 6. queue completion email (SES/log)
-                 └─────────────┘
+                 ┌─────────────┐        1. one transaction: completion row
+  React client ─▶│  API        │           + outbox event ─────────┐
+  (Vite, :5173)  │  (Spring    │        2. return                  ▼
+                 │   Boot,     │           immediately        ┌──────────┐
+                 │   :8080)    │◀──────────────────────────── │ Postgres │
+                 └──────┬──────┘                              └──────────┘
+                        │ 3. outbox relay publishes                 ▲
+                        │    unpublished events (timer,             │
+                        ▼    off the request path)                  │
+                 ┌─────────────┐                                    │
+                 │   AWS SQS   │                                    │
+                 └──────┬──────┘                                    │
+                        │ 4. long-poll                              │
+                        ▼                                           │
+                 ┌─────────────┐        5. one transaction: record  │
+                 │   Worker    │           the event id, lock the   │
+                 │  (Spring    │           user, compute streak/XP/ │
+                 │   Boot)     │           achievements ────────────┘
+                 └─────────────┘────────▶ 6. queue completion email (SES/log)
 ```
 
 **Why:** moving reward computation off the request thread keeps the API fast under load and
@@ -72,15 +72,40 @@ acting on someone else's habit is `403`, and an unknown habit is `404`.
 
 - **`queue.enabled=false`** (default local dev): streak, XP, and achievement unlocks are computed
   inline and returned in the response.
-- **`queue.enabled=true`**: the API writes a zero-XP completion row, enqueues
-  `{userId, habitId, date}` to SQS on a background thread pool (not the request thread), and
-  returns immediately. The worker long-polls SQS, computes streak/XP/achievement state, persists
-  it, and queues a completion email.
+- **`queue.enabled=true`**: the API writes a zero-XP completion row and an event describing it
+  (`{eventId, userId, habitId, date, occurredAt}`) in one database transaction, then returns
+  immediately. A relay publishes the event to SQS. The worker long-polls SQS, computes
+  streak/XP/achievement state, persists it, and queues a completion email. The reward is
+  therefore eventually consistent: the response shows the completion, and the XP, streak, and
+  any achievement appear after the relay's next run (`OUTBOX_RELAY_DELAY_MS`, default 500 ms)
+  plus queue and worker time.
 
-**Reliability:**
-- SQS message processing in `CompletionProcessor` is **idempotent per `(habit, date)`** — a
-  redelivered message (SQS is at-least-once) is a no-op rather than double-granting XP. Covered
-  by [`CompletionProcessorTest`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/service/CompletionProcessorTest.java).
+**Reliability:** the pipeline applies each completion's reward **exactly once**, even though the
+queue only promises at-least-once, unordered delivery.
+- **No lost events (transactional outbox).** Writing to the database and then sending to a queue
+  are two separate systems; if the send fails after the commit, the reward is lost. So the API
+  never sends on the request path. The event goes into an `outbox_events` table in the same
+  transaction as the completion, and [`OutboxRelay`](backend/progresstracker/src/main/java/com/progresstracker/progresstracker/outbox/OutboxRelay.java)
+  publishes unpublished rows on a timer (`FOR UPDATE SKIP LOCKED`, so several API instances can
+  relay at once). If the queue is down or the API restarts mid-send, the row is simply still
+  there for the next run. A request that loses the unique-constraint race fails on the
+  completion row before it writes an event, so there is exactly one event per completion.
+  The relay only runs in async mode: before switching `QUEUE_ENABLED` to false, wait until
+  `select count(*) from outbox_events where published_at is null` returns 0.
+- **No double rewards (idempotent consumer).** The worker records each event id in a
+  `processed_events` table in the same transaction as the reward, so a redelivered message is
+  recognised and ignored. Then, holding a row lock on the user, it rewards a completion only if
+  that completion has no XP yet. That check is what guarantees one reward per completion, even
+  if the same completion arrives as two different events. If processing fails, everything rolls
+  back, including the event id, and the redelivery tries again.
+- **No lost updates.** The user lock makes reward transactions for one user run one at a time,
+  so two workers cannot overwrite each other's totals. The API and the worker write different
+  columns of the same habit row, and each updates only the columns it changed, so an edit
+  cannot erase a reward or the other way round. Achievement unlocks are inserts that do nothing
+  on conflict, so racing unlocks cannot fail.
+- **Order does not matter.** The current streak only moves forward and the 7-day-streak
+  achievement is judged on the longest streak, so an older event arriving late (a retry, or a
+  redrive from the dead-letter queue) gives the same result as arriving on time.
 - The poller distinguishes **poison messages** (malformed payload — deleted immediately, retrying
   can't help) from **transient processing failures** (left on the queue so SQS redelivers after
   the visibility timeout; safe because processing is idempotent).
@@ -102,7 +127,8 @@ locally against real Postgres:
 | Async (`queue.enabled=true`) | ~4.5ms |
 
 **~63% reduction**, driven by moving the ~10-query achievement-evaluation pass off the request
-thread.
+thread. The transactional outbox added later puts one more insert in the async request's
+transaction; measured before and after that change, the async figure did not move.
 
 ## Running with Docker
 
@@ -182,8 +208,10 @@ PostgreSQL and an SQS-compatible broker in Docker and run the actual services ag
 | [`HabitAccessControlIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/HabitAccessControlIT.java) | A create request carrying another user's habit id, or its own XP, cannot take over that habit or grant itself a reward. Users only see their own habits and get 403 on anyone else's; requests without a valid token get 401. |
 | [`RequestValidationIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/RequestValidationIT.java) | Blank names, out-of-range goals, unknown enum values, malformed JSON, bad emails, and short passwords are refused with a problem document and write nothing. |
 | [`OpenApiContractIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/OpenApiContractIT.java) | The committed `openapi.json` matches what the running API serves. |
-| [`CompletionEnqueueIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/CompletionEnqueueIT.java) | In async mode the API records a zero-XP completion and publishes the event to the queue through the real AWS SDK client. |
+| [`CompletionOutboxIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/CompletionOutboxIT.java) | The completion and its event are written together and the relay publishes the event; if the event cannot be written, the completion is rolled back with it; 20 simultaneous completions leave exactly one event; an event written while the queue is down is delivered once it is back. |
+| [`OutboxRelayIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/OutboxRelayIT.java) | A relay skips rows another relay has locked instead of waiting for them; six relays released together publish each of 30 events exactly once; the purge removes old published events and never an unpublished one. |
 | [`CompletionPipelineIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/CompletionPipelineIT.java) | The worker grants XP, streaks, and achievements from a queued event; duplicate deliveries grant the reward once; malformed messages are deleted; a failure mid-processing rolls back and the redelivery succeeds; a message that always fails moves to the dead-letter queue after 5 attempts. |
+| [`ConcurrentProcessingIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/ConcurrentProcessingIT.java) | Several workers at once: the same event handled twice rewards and emails once; two days of one habit handled together lose no XP; different habits of one new user unlock the first achievement once. All of these failed before the event-id table and the per-user lock. Also: an older day handled late still earns its streak without rewinding the current one, and a reward does not undo an edit made meanwhile. |
 
 **End-to-end**: `scripts/smoke-test.sh` drives the Docker Compose stack over HTTP and waits for
 the worker's reward to appear, covering the hop between the two services.

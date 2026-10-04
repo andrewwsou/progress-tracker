@@ -30,3 +30,5 @@ worker:
   waitTimeSeconds: 20
   maxMessages: 10
   visibilityTimeoutSeconds: 60
+  # Deadline for applying one reward. Bounds how long a transaction waits on a lock.
+  processTimeoutSeconds: 5

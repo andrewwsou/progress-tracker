@@ -1,8 +1,13 @@
 package com.progresstracker.progresstracker.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.model.HabitEntry;
 import com.progresstracker.progresstracker.model.User;
+import com.progresstracker.progresstracker.outbox.CompletionEvent;
+import com.progresstracker.progresstracker.outbox.OutboxEvent;
+import com.progresstracker.progresstracker.outbox.OutboxEventRepository;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
 import org.springframework.stereotype.Service;
@@ -10,8 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.temporal.TemporalAdjusters;
 import java.time.temporal.WeekFields;
+import java.util.UUID;
 
 @Service
 public class HabitProgressService {
@@ -19,15 +26,21 @@ public class HabitProgressService {
     private final HabitRepository habitRepository;
     private final HabitEntryRepository habitEntryRepository;
     private final AchievementService achievementService;
+    private final OutboxEventRepository outboxEventRepository;
+    private final ObjectMapper objectMapper;
 
     public HabitProgressService(
             HabitRepository habitRepository,
             HabitEntryRepository habitEntryRepository,
-            AchievementService achievementService
+            AchievementService achievementService,
+            OutboxEventRepository outboxEventRepository,
+            ObjectMapper objectMapper
     ) {
         this.habitRepository = habitRepository;
         this.habitEntryRepository = habitEntryRepository;
         this.achievementService = achievementService;
+        this.outboxEventRepository = outboxEventRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -75,7 +88,24 @@ public class HabitProgressService {
         }
 
         habitEntryRepository.save(new HabitEntry(habit, today, 0));
+
+        // Written in the same transaction as the row above: the completion and the event asking
+        // the worker to reward it commit together or not at all. A request that loses the
+        // unique-constraint race rolls back before reaching this line, so it leaves no event.
+        outboxEventRepository.save(completionEvent(habit, today));
         return habit;
+    }
+
+    private OutboxEvent completionEvent(Habit habit, LocalDate date) {
+        OffsetDateTime now = OffsetDateTime.now();
+        CompletionEvent event = new CompletionEvent(
+                UUID.randomUUID(), habit.getUser().getId(), habit.getId(), date, now);
+        try {
+            String payload = objectMapper.writeValueAsString(event.toMessage());
+            return new OutboxEvent(event.eventId(), CompletionEvent.TYPE, payload, now);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to serialize completion event", e);
+        }
     }
 
     public boolean alreadyCompletedForPeriod(Habit habit, LocalDate today) {

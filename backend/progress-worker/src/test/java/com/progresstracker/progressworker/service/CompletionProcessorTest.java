@@ -1,5 +1,9 @@
 package com.progresstracker.progressworker.service;
 
+import com.progresstracker.progressworker.repository.ProcessedEventRepository;
+import com.progresstracker.progressworker.repository.UserRepository;
+import java.time.OffsetDateTime;
+import java.util.UUID;
 import com.progresstracker.progressworker.model.Habit;
 import com.progresstracker.progressworker.model.HabitEntry;
 import com.progresstracker.progressworker.model.User;
@@ -31,6 +35,12 @@ class CompletionProcessorTest {
     private HabitEntryRepository habitEntryRepository;
 
     @Mock
+    private UserRepository userRepository;
+
+    @Mock
+    private ProcessedEventRepository processedEventRepository;
+
+    @Mock
     private AchievementService achievementService;
 
     @Mock
@@ -44,7 +54,20 @@ class CompletionProcessorTest {
 
     @BeforeEach
     void setUp() {
-        processor = new CompletionProcessor(habitRepository, habitEntryRepository, achievementService, emailService);
+        processor = new CompletionProcessor(habitRepository, habitEntryRepository, userRepository,
+                processedEventRepository, achievementService, emailService);
+        // By default every event id is new and every user exists.
+        lenient().when(processedEventRepository.insertIfAbsent(any(), any())).thenReturn(1);
+        lenient().when(userRepository.findByIdForUpdate(any())).thenAnswer(inv -> {
+            User user = new User();
+            user.setId(inv.getArgument(0, Long.class));
+            user.setEmail("u@example.com");
+            return Optional.of(user);
+        });
+    }
+
+    private boolean process(Long userId, Long habitId, LocalDate date) {
+        return processor.process(UUID.randomUUID(), userId, habitId, date, OffsetDateTime.now());
     }
 
     private Habit habitWithUser(Long userId) {
@@ -84,12 +107,64 @@ class CompletionProcessorTest {
         when(habitRepository.findById(100L)).thenReturn(Optional.of(habit));
         stubEntryPersistence(habit);
 
-        processor.process(1L, 100L, LocalDate.now());
+        boolean applied = process(1L, 100L, LocalDate.now());
 
+        assertThat(applied).isTrue();
         assertThat(habit.getXpTotal()).isEqualTo(10);
         assertThat(habit.getCurrentStreak()).isEqualTo(1);
-        verify(achievementService, times(1)).evaluateAndUnlock(eq(habit.getUser()), eq(habit));
-        verify(emailService, times(1)).queueCompletionEmail(eq(habit.getUser()), eq("Read"));
+        verify(achievementService, times(1)).evaluateAndUnlock(any(), eq(habit));
+        verify(emailService, times(1)).queueCompletionEmail(any(), eq("Read"));
+    }
+
+    @Test
+    void process_habitNoLongerExists_isANoOpRatherThanAFailure() {
+        when(habitRepository.findById(100L)).thenReturn(Optional.empty());
+
+        boolean applied = process(1L, 100L, LocalDate.now());
+
+        // Returning normally lets the event be recorded as handled and the message deleted,
+        // instead of being retried five times and landing in the dead-letter queue.
+        assertThat(applied).isFalse();
+        verifyNoInteractions(habitEntryRepository, achievementService, emailService);
+    }
+
+    @Test
+    void process_eventIdAlreadyRecorded_doesNothingAtAll() {
+        // The inbox already holds this event id: another delivery of it was handled before.
+        when(processedEventRepository.insertIfAbsent(any(), any())).thenReturn(0);
+
+        boolean applied = process(1L, 100L, LocalDate.now());
+
+        assertThat(applied).isFalse();
+        verifyNoInteractions(userRepository, habitRepository, habitEntryRepository, achievementService, emailService);
+    }
+
+    @Test
+    void process_olderDayHandledAfterANewerOne_doesNotRewindTheCurrentStreak() {
+        Habit habit = habitWithUser(1L);
+        when(habitRepository.findById(100L)).thenReturn(Optional.of(habit));
+        stubEntryPersistence(habit);
+        LocalDate today = LocalDate.now();
+        LocalDate yesterday = today.minusDays(1);
+        // Both days were completed; the API wrote both rows before either event was handled.
+        storedEntries.put(yesterday, entryFor(habit, yesterday));
+        storedEntries.put(today, entryFor(habit, today));
+
+        process(1L, 100L, today);      // streak 2, earns 12
+        process(1L, 100L, yesterday);  // arrives late: streak 1, earns 10
+
+        assertThat(habit.getCurrentStreak()).isEqualTo(2);
+        assertThat(habit.getLastCompletedDate()).isEqualTo(today);
+        assertThat(habit.getLongestStreak()).isEqualTo(2);
+        assertThat(habit.getXpTotal()).isEqualTo(22);
+    }
+
+    private HabitEntry entryFor(Habit habit, LocalDate date) {
+        HabitEntry entry = new HabitEntry();
+        entry.setHabit(habit);
+        entry.setCompletedDate(date);
+        entry.setXpEarned(0);
+        return entry;
     }
 
     @Test
@@ -101,8 +176,8 @@ class CompletionProcessorTest {
         stubEntryPersistence(habit);
 
         LocalDate date = LocalDate.now();
-        processor.process(1L, 100L, date);
-        processor.process(1L, 100L, date); // redelivery
+        process(1L, 100L, date);
+        process(1L, 100L, date); // the same completion again, under a different event id
 
         assertThat(habit.getXpTotal()).isEqualTo(10); // not 20
         assertThat(habit.getCurrentStreak()).isEqualTo(1);
@@ -115,7 +190,7 @@ class CompletionProcessorTest {
         Habit habit = habitWithUser(1L);
         when(habitRepository.findById(100L)).thenReturn(Optional.of(habit));
 
-        assertThatThrownBy(() -> processor.process(999L, 100L, LocalDate.now()))
+        assertThatThrownBy(() -> process(999L, 100L, LocalDate.now()))
                 .isInstanceOf(IllegalStateException.class);
 
         verifyNoInteractions(achievementService, emailService);

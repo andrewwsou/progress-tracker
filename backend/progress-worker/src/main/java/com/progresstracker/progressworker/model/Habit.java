@@ -1,11 +1,16 @@
 package com.progresstracker.progressworker.model;
 
+import org.hibernate.annotations.DynamicUpdate;
 import jakarta.persistence.*;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+// Both services update this table: the API changes the name and goal, the worker changes XP and
+// streaks. Writing only the columns that actually changed keeps one from overwriting the other's
+// columns with the stale values it loaded.
 @Entity
+@DynamicUpdate
 public class Habit {
 
     public enum Frequency { DAILY, WEEKLY }

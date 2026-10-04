@@ -6,6 +6,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.util.UUID;
 
 @Component
 public class DevProcessOnceRunner implements CommandLineRunner {
@@ -37,7 +38,7 @@ public class DevProcessOnceRunner implements CommandLineRunner {
         }
 
         LocalDate date = LocalDate.parse(dateStr);
-        completionProcessor.process(userId, habitId, date);
+        completionProcessor.process(UUID.randomUUID(), userId, habitId, date, null);
 
         System.out.println("DEV_PROCESS_ONCE done userId=" + userId + " habitId=" + habitId + " date=" + date);
     }

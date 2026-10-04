@@ -18,6 +18,21 @@ function authHeaders(): HeadersInit {
   };
 }
 
+/** An error response from the API. The status lets callers react to specific cases, such as 401. */
+export class ApiError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+async function toError(res: Response, fallback: string): Promise<ApiError> {
+  return new ApiError(res.status, await errorMessage(res, fallback));
+}
+
 /** Turns an error response (an RFC 9457 problem document) into a message a person can read. */
 async function errorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -36,7 +51,7 @@ export async function registerUser(email: string, password: string): Promise<str
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  if (!res.ok) throw new Error(await errorMessage(res, "Failed to register"));
+  if (!res.ok) throw await toError(res, "Failed to register");
 
   const data: AuthResponse = await res.json();
   return data.token;
@@ -48,7 +63,7 @@ export async function loginUser(email: string, password: string): Promise<string
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  if (!res.ok) throw new Error(await errorMessage(res, "Failed to login"));
+  if (!res.ok) throw await toError(res, "Failed to login");
 
   const data: AuthResponse = await res.json();
   return data.token;
@@ -60,7 +75,7 @@ export async function fetchHabits(): Promise<Habit[]> {
       ...authHeaders(),
     },
   });
-  if (!res.ok) throw new Error(await errorMessage(res, "Failed to fetch habits"));
+  if (!res.ok) throw await toError(res, "Failed to fetch habits");
   return res.json();
 }
 
@@ -73,7 +88,7 @@ export async function createHabit(payload: HabitInput): Promise<Habit> {
     },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(await errorMessage(res, "Failed to create habit"));
+  if (!res.ok) throw await toError(res, "Failed to create habit");
   return res.json();
 }
 
@@ -86,7 +101,7 @@ export async function updateHabit(id: number, payload: HabitInput): Promise<Habi
     },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(await errorMessage(res, "Failed to update habit"));
+  if (!res.ok) throw await toError(res, "Failed to update habit");
   return res.json();
 }
 
@@ -96,7 +111,7 @@ export async function fetchAchievements(): Promise<Achievement[]> {
       ...authHeaders(),
     },
   });
-  if (!res.ok) throw new Error(await errorMessage(res, "Failed to fetch achievements"));
+  if (!res.ok) throw await toError(res, "Failed to fetch achievements");
   return res.json();
 }
 
@@ -107,7 +122,7 @@ export async function deleteHabit(id: number): Promise<void> {
       ...authHeaders(),
     },
   });
-  if (!res.ok) throw new Error(await errorMessage(res, "Failed to delete habit"));
+  if (!res.ok) throw await toError(res, "Failed to delete habit");
 }
 
 export async function completeHabit(habitId: number): Promise<Habit> {
@@ -117,6 +132,6 @@ export async function completeHabit(habitId: number): Promise<Habit> {
       ...authHeaders(),
     },
   });
-  if (!res.ok) throw new Error(await errorMessage(res, "Failed to complete habit"));
+  if (!res.ok) throw await toError(res, "Failed to complete habit");
   return res.json();
 }

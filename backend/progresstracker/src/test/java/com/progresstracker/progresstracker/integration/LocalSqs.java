@@ -55,6 +55,11 @@ final class LocalSqs {
         return endpoint() + "/" + ACCOUNT_ID + "/" + name;
     }
 
+    /** Removes a queue, to simulate the queue being unavailable. */
+    static void deleteQueue(String queueUrl) {
+        CLIENT.deleteQueue(request -> request.queueUrl(queueUrl));
+    }
+
     static List<Message> receive(String queueUrl) {
         return CLIENT.receiveMessage(request -> request
                         .queueUrl(queueUrl)

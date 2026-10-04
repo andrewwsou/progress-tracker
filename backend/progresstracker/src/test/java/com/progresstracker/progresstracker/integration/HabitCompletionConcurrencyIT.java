@@ -1,6 +1,11 @@
 package com.progresstracker.progresstracker.integration;
 
+import com.progresstracker.progresstracker.model.Habit;
+import com.progresstracker.progresstracker.repository.HabitRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.TestPropertySource;
 
 import java.util.ArrayList;
@@ -22,6 +27,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class HabitCompletionConcurrencyIT extends IntegrationTestBase {
 
     private static final int CONCURRENT_REQUESTS = 50;
+
+    @Autowired
+    private HabitRepository habitRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Test
     void concurrentCompletionsOfOneHabitAllSucceedAndRewardExactlyOnce() throws Exception {
@@ -53,12 +64,12 @@ class HabitCompletionConcurrencyIT extends IntegrationTestBase {
     }
 
     /**
-     * A different race: a brand-new user completing several habits at once. Each completion tries
-     * to unlock the same first-completion achievement, so all but one can hit that table's unique
-     * constraint and roll back. A request must never answer 200 for a completion that was rolled back.
+     * A different race: a brand-new user completing several habits at once. Every completion tries
+     * to unlock the same first-completion achievement. The unlock is an insert that does nothing on
+     * conflict, so all of them succeed and the achievement is unlocked exactly once.
      */
     @Test
-    void concurrentCompletionsOfDifferentHabitsNeverReportSuccessWithoutRecordingIt() throws Exception {
+    void concurrentCompletionsOfDifferentHabitsAllSucceedAndUnlockTheAchievementOnce() throws Exception {
         String email = uniqueEmail();
         String token = registerUser(email);
         List<Long> habitIds = new ArrayList<>();
@@ -72,14 +83,37 @@ class HabitCompletionConcurrencyIT extends IntegrationTestBase {
         }
         List<Integer> statuses = runAtOnce(calls);
 
-        assertThat(statuses).isSubsetOf(200, 409).contains(200);
-        for (int i = 0; i < habitIds.size(); i++) {
-            int expectedEntries = statuses.get(i) == 200 ? 1 : 0;
-            assertThat(entryCount(habitIds.get(i))).isEqualTo(expectedEntries);
-            assertThat(xpTotal(habitIds.get(i))).isEqualTo(expectedEntries * 10);
+        assertThat(statuses).hasSize(habitIds.size()).containsOnly(200);
+        for (long habitId : habitIds) {
+            assertThat(entryCount(habitId)).isEqualTo(1);
+            assertThat(xpTotal(habitId)).isEqualTo(10);
         }
         assertThat(jdbc.queryForObject(
                 "select count(*) from user_achievement where user_id = ?", Integer.class, userIdFor(email)))
                 .isEqualTo(1);
+    }
+
+    /**
+     * The API and the worker both update the habit row: one the name and goal, the other XP and
+     * streaks. An edit must write only what it changed, or it would put back the XP it loaded
+     * before the worker's reward landed.
+     */
+    @Test
+    void editingAHabitDoesNotOverwriteARewardAppliedInTheMeantime() {
+        String token = registerUser(uniqueEmail());
+        long habitId = createDailyHabit(token, "Before");
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            Habit habit = habitRepository.findById(habitId).orElseThrow();
+            // After the edit loaded the row, the reward is written by someone else.
+            jdbc.update("update habit set xp_total = 10, current_streak = 1 where id = ?", habitId);
+            habit.setName("After");
+        });
+
+        Map<String, Object> row = jdbc.queryForMap(
+                "select name, xp_total, current_streak from habit where id = ?", habitId);
+        assertThat(row.get("name")).isEqualTo("After");
+        assertThat(row.get("xp_total")).isEqualTo(10);
+        assertThat(row.get("current_streak")).isEqualTo(1);
     }
 }

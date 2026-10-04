@@ -6,7 +6,6 @@ import com.progresstracker.progresstracker.model.User;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
 import com.progresstracker.progresstracker.repository.UserRepository;
-import com.progresstracker.progresstracker.service.CompletionQueueService;
 import com.progresstracker.progresstracker.service.HabitProgressService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,17 +47,13 @@ class HabitControllerTest {
     private HabitEntryRepository habitEntryRepository;
 
     @Mock
-    private CompletionQueueService completionQueueService;
-
-    @Mock
     private Authentication authentication;
 
     private HabitController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new HabitController(
-                habitRepository, userRepository, habitProgressService, habitEntryRepository, completionQueueService);
+        controller = new HabitController(habitRepository, userRepository, habitProgressService, habitEntryRepository);
         ReflectionTestUtils.setField(controller, "queueEnabled", false);
     }
 

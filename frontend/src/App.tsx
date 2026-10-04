@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Habit, Achievement } from "./api";
 import {
+  ApiError,
   fetchHabits,
   createHabit,
   updateHabit,
@@ -55,8 +56,30 @@ function App() {
       const [h, a] = await Promise.all([fetchHabits(), fetchAchievements().catch(() => [])]);
       setHabits(h);
       setAchievements(a as Achievement[]);
+    } catch (err) {
+      // 401 means the saved token is no longer accepted (expired, or the account is gone).
+      // Drop it and show the login form instead of an empty page.
+      if (err instanceof ApiError && err.status === 401) {
+        localStorage.removeItem("token");
+        setToken(null);
+        setHabits([]);
+        setAchievements([]);
+        return;
+      }
+      throw err;
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** Reloads without the loading indicator, for refreshes the user did not ask for. */
+  async function refreshQuietly() {
+    try {
+      const [h, a] = await Promise.all([fetchHabits(), fetchAchievements().catch(() => [])]);
+      setHabits(h);
+      setAchievements(a as Achievement[]);
+    } catch {
+      // A background refresh failing is not worth interrupting the user for.
     }
   }
 
@@ -113,6 +136,9 @@ function App() {
   async function handleCompleteHabit(id: number) {
     await completeHabit(id);
     await loadAll();
+    // When the backend runs in async mode, the worker applies the reward a moment after the
+    // request returns. Look again shortly so the XP, streak, and any new achievement show up.
+    window.setTimeout(() => void refreshQuietly(), 1500);
   }
 
   function startEditHabit(h: Habit) {

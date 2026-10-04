@@ -7,7 +7,6 @@ import com.progresstracker.progresstracker.model.User;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
 import com.progresstracker.progresstracker.repository.UserRepository;
-import com.progresstracker.progresstracker.service.CompletionQueueService;
 import com.progresstracker.progresstracker.service.HabitProgressService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -38,21 +37,18 @@ public class HabitController {
     private final UserRepository userRepository;
     private final HabitProgressService habitProgressService;
     private final HabitEntryRepository habitEntryRepository;
-    private final CompletionQueueService completionQueueService;
 
-    @Value("${queue.enabled:true}")
+    @Value("${queue.enabled:false}")
     private boolean queueEnabled;
 
     public HabitController(HabitRepository habitRepository,
                            UserRepository userRepository,
                            HabitProgressService habitProgressService,
-                           HabitEntryRepository habitEntryRepository,
-                           CompletionQueueService completionQueueService) {
+                           HabitEntryRepository habitEntryRepository) {
         this.habitRepository = habitRepository;
         this.userRepository = userRepository;
         this.habitProgressService = habitProgressService;
         this.habitEntryRepository = habitEntryRepository;
-        this.completionQueueService = completionQueueService;
     }
 
     @GetMapping
@@ -77,6 +73,7 @@ public class HabitController {
     }
 
     @PutMapping("/{id}")
+    @Transactional
     public HabitResponse update(@PathVariable Long id,
                                 @Valid @RequestBody HabitRequest request,
                                 Authentication authentication) {
@@ -108,16 +105,16 @@ public class HabitController {
 
     @PostMapping("/{id}/complete")
     public HabitResponse completeHabit(@PathVariable Long id, Authentication authentication) {
-        User user = requireUser(authentication);
-        Habit habit = requireOwnedHabit(id, user);
+        Habit habit = requireOwnedHabit(id, requireUser(authentication));
 
         long start = System.nanoTime();
         Habit updated;
 
         try {
             if (queueEnabled) {
+                // Records the completion and its outbox event in one transaction. The outbox
+                // relay publishes the event; the worker computes the reward.
                 updated = habitProgressService.recordCompletionOnly(habit);
-                completionQueueService.enqueueCompletion(user.getId(), habit.getId(), LocalDate.now());
             } else {
                 updated = habitProgressService.completeToday(habit);
             }

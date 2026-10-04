@@ -57,7 +57,8 @@ services:
     build: ./backend/progress-worker
     environment: *backend-environment
     depends_on:
-      # The API creates the database schema on startup, so the worker waits for it.
+      # The API creates the shared tables on startup, so the worker waits for it
+      # (the worker then adds its own processed_events table).
       api:
         condition: service_healthy
       sqs:

@@ -1,27 +1,23 @@
-package com.progresstracker.progresstracker.repository;
+package com.progresstracker.progressworker.repository;
 
-import com.progresstracker.progresstracker.model.Achievement;
-import com.progresstracker.progresstracker.model.User;
-import com.progresstracker.progresstracker.model.UserAchievement;
+import com.progresstracker.progressworker.model.Achievement;
+import com.progresstracker.progressworker.model.User;
+import com.progresstracker.progressworker.model.UserAchievement;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-
 import java.time.LocalDateTime;
+
 import java.util.List;
-import java.util.Optional;
 
 public interface UserAchievementRepository extends JpaRepository<UserAchievement, Long> {
-    List<UserAchievement> findByUserOrderByUnlockedAtDesc(User user);
-    Optional<UserAchievement> findByUserAndAchievement(User user, Achievement achievement);
     boolean existsByUserAndAchievement(User user, Achievement achievement);
 
     /**
-     * Unlocks an achievement unless the user already has it. Two transactions racing to unlock
-     * the same one both succeed and exactly one row exists afterwards, where a plain insert
-     * would make the loser fail on the unique constraint and roll back its whole completion.
+     * Unlocks an achievement unless the user already has it, without failing on the unique
+     * constraint if something else unlocked it first.
      *
      * @return 1 if this call unlocked it, 0 if it was already unlocked
      */
@@ -34,16 +30,5 @@ public interface UserAchievementRepository extends JpaRepository<UserAchievement
     int insertIfAbsent(@Param("userId") Long userId,
                        @Param("achievementId") Long achievementId,
                        @Param("unlockedAt") LocalDateTime unlockedAt);
-
-
-    @Query("""
-    select ua
-    from UserAchievement ua
-    join fetch ua.achievement a
-    where ua.user = :user
-    order by ua.unlockedAt desc
-""")
-    List<UserAchievement> findByUserWithAchievementOrderByUnlockedAtDesc(@Param("user") User user);
-
-
+    List<UserAchievement> findByUserOrderByUnlockedAtDesc(User user);
 }

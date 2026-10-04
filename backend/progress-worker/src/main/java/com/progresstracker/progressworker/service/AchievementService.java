@@ -3,7 +3,6 @@ package com.progresstracker.progressworker.service;
 import com.progresstracker.progressworker.model.Achievement;
 import com.progresstracker.progressworker.model.Habit;
 import com.progresstracker.progressworker.model.User;
-import com.progresstracker.progressworker.model.UserAchievement;
 import com.progresstracker.progressworker.repository.AchievementRepository;
 import com.progresstracker.progressworker.repository.HabitEntryRepository;
 import com.progresstracker.progressworker.repository.HabitRepository;
@@ -79,10 +78,10 @@ public class AchievementService {
     }
 
     @Transactional
-    public List<UserAchievement> evaluateAndUnlock(User user, Habit justUpdatedHabit) {
+    public List<Achievement> evaluateAndUnlock(User user, Habit justUpdatedHabit) {
         ensureDefaultAchievements();
 
-        List<UserAchievement> newlyUnlocked = new ArrayList<>();
+        List<Achievement> newlyUnlocked = new ArrayList<>();
 
         Achievement first = achievementRepository.findByCode(FIRST_COMPLETION).orElseThrow();
         if (!userAchievementRepository.existsByUserAndAchievement(user, first)) {
@@ -95,14 +94,16 @@ public class AchievementService {
                 if (totalCompletions > 0) break;
             }
             if (totalCompletions >= first.getThreshold()) {
-                newlyUnlocked.add(unlock(user, first));
+                if (unlock(user, first)) newlyUnlocked.add(first);
             }
         }
 
         Achievement streak7 = achievementRepository.findByCode(STREAK_7).orElseThrow();
         if (!userAchievementRepository.existsByUserAndAchievement(user, streak7)) {
-            if (justUpdatedHabit.getCurrentStreak() >= streak7.getThreshold()) {
-                newlyUnlocked.add(unlock(user, streak7));
+            // The longest streak, not the current one: it only ever grows, so the result does not
+            // depend on the order completions were processed in.
+            if (justUpdatedHabit.getLongestStreak() >= streak7.getThreshold()) {
+                if (unlock(user, streak7)) newlyUnlocked.add(streak7);
             }
         }
 
@@ -110,15 +111,15 @@ public class AchievementService {
         if (!userAchievementRepository.existsByUserAndAchievement(user, xp100)) {
             long totalXp = habitRepository.sumXpByUser(user);
             if (totalXp >= xp100.getThreshold()) {
-                newlyUnlocked.add(unlock(user, xp100));
+                if (unlock(user, xp100)) newlyUnlocked.add(xp100);
             }
         }
 
         return newlyUnlocked;
     }
 
-    private UserAchievement unlock(User user, Achievement achievement) {
-        UserAchievement ua = new UserAchievement(user, achievement, LocalDateTime.now());
-        return userAchievementRepository.save(ua);
+    /** Safe to race: unlocking something already unlocked is a no-op, never a constraint failure. */
+    private boolean unlock(User user, Achievement achievement) {
+        return userAchievementRepository.insertIfAbsent(user.getId(), achievement.getId(), LocalDateTime.now()) == 1;
     }
 }

@@ -18,8 +18,12 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
@@ -131,9 +135,11 @@ public class SqsPoller {
     }
 
     private void handleMessage(Message message) {
+        UUID eventId;
         long userId;
         long habitId;
         LocalDate date;
+        OffsetDateTime occurredAt;
 
         // Schema errors can never succeed on retry, so these are poison messages: delete them.
         try {
@@ -157,6 +163,9 @@ public class SqsPoller {
             userId = userIdNode.asLong();
             habitId = habitIdNode.asLong();
             date = LocalDate.parse(dateStr);
+
+            eventId = parseEventId(node, habitId, date);
+            occurredAt = parseOccurredAt(node);
         } catch (Exception e) {
             log.error("Unparseable message (deleting message): {}", message.body(), e);
             delete(message);
@@ -165,15 +174,50 @@ public class SqsPoller {
 
         // Processing failures (DB blips, transient errors) are different: leave the message
         // alone so SQS redelivers it after the visibility timeout expires. This is safe because
-        // CompletionProcessor.process() is idempotent per (habit, date) - a retried delivery
-        // either finishes the original attempt or is a no-op, never a duplicate reward.
+        // CompletionProcessor.process() is idempotent per event - a retried delivery either
+        // finishes the original attempt or is a no-op, never a duplicate reward.
         try {
-            completionProcessor.process(userId, habitId, date);
+            boolean applied = completionProcessor.process(eventId, userId, habitId, date, occurredAt);
             delete(message);
-            log.info("Processed completion userId={} habitId={} date={}", userId, habitId, date);
+            if (applied) {
+                log.info("Processed completion eventId={} userId={} habitId={} date={}", eventId, userId, habitId, date);
+            } else {
+                log.info("No reward applied eventId={} habitId={} date={} (already handled, or habit deleted)",
+                        eventId, habitId, date);
+            }
         } catch (Exception e) {
-            log.error("Failed processing completion userId={} habitId={} date={} (leaving message for retry): {}",
-                    userId, habitId, date, e.getMessage(), e);
+            log.error("Failed processing completion eventId={} userId={} habitId={} date={} (leaving message for retry): {}",
+                    eventId, userId, habitId, date, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * The user, habit and date are what identify a completion. If those are valid the event is
+     * processed, even when its id is missing or unreadable: it then gets a stable id derived from
+     * the completion itself, so repeats of it are still recognised.
+     */
+    private static UUID parseEventId(JsonNode node, long habitId, LocalDate date) {
+        if (node.hasNonNull("eventId")) {
+            try {
+                return UUID.fromString(node.get("eventId").asText());
+            } catch (IllegalArgumentException e) {
+                log.warn("Unreadable eventId '{}'; deriving one from habit {} and date {}",
+                        node.get("eventId").asText(), habitId, date);
+            }
+        }
+        return UUID.nameUUIDFromBytes(("completion:" + habitId + ":" + date).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Only used for reporting, so a missing or unreadable value is never a reason to drop the event. */
+    private static OffsetDateTime parseOccurredAt(JsonNode node) {
+        if (!node.hasNonNull("occurredAt")) {
+            return null;
+        }
+        try {
+            return OffsetDateTime.parse(node.get("occurredAt").asText());
+        } catch (DateTimeParseException e) {
+            log.warn("Unreadable occurredAt '{}'; recording the event without it", node.get("occurredAt").asText());
+            return null;
         }
     }
 

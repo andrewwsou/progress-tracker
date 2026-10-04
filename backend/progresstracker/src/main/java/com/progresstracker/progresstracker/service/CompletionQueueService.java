@@ -1,37 +1,32 @@
 package com.progresstracker.progresstracker.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.progresstracker.progresstracker.outbox.OutboxEvent;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.SqsClientBuilder;
-import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import software.amazon.awssdk.services.sqs.model.SendMessageBatchRequestEntry;
+import software.amazon.awssdk.services.sqs.model.SendMessageBatchResponse;
 
 import java.net.URI;
-import java.time.LocalDate;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.time.Duration;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
+/** The API's connection to the completion queue. Used by the outbox relay, never on a request thread. */
 @Service
 public class CompletionQueueService {
     private static final Logger log = LoggerFactory.getLogger(CompletionQueueService.class);
 
-    private final ObjectMapper objectMapper;
-
-    // Sends run off the request thread so a slow/blocking SQS network call
-    // (real round trip to AWS) never adds latency to the API response.
-    private final ExecutorService enqueueExecutor = Executors.newFixedThreadPool(4);
-
-    @Value("${queue.enabled:true}")
+    @Value("${queue.enabled:false}")
     private boolean enabled;
 
     @Value("${queue.sqsUrl:}")
@@ -47,13 +42,9 @@ public class CompletionQueueService {
 
     private volatile SqsClient sqsClient;
 
-    public CompletionQueueService(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
-
     /**
      * Fails startup on bad queue settings. Without this the API would start, report healthy,
-     * and only log an error on a background thread each time a completion could not be published.
+     * and only discover the problem when the relay first tried to publish.
      */
     @PostConstruct
     void validateConfiguration() {
@@ -66,43 +57,37 @@ public class CompletionQueueService {
         getClient();
     }
 
-    public void enqueueCompletion(Long userId, Long habitId, LocalDate date) {
-        if (!enabled) {
-            log.info("SQS enqueue skipped (queue.enabled=false) userId={} habitId={} date={}", userId, habitId, date);
-            return;
-        }
-        if (sqsUrl == null || sqsUrl.isBlank()) {
-            throw new IllegalStateException("queue.sqsUrl must be set when queue.enabled=true");
-        }
+    /**
+     * Sends up to 10 events in one batch call.
+     *
+     * @return the ids of the events the queue accepted; anything missing must be sent again
+     */
+    public Set<UUID> publish(List<OutboxEvent> events) {
+        List<SendMessageBatchRequestEntry> entries = events.stream()
+                .map(event -> SendMessageBatchRequestEntry.builder()
+                        .id(event.getId().toString())
+                        .messageBody(event.getPayload())
+                        .build())
+                .toList();
 
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("userId", userId);
-        payload.put("habitId", habitId);
-        payload.put("date", date.toString());
+        SendMessageBatchResponse response = getClient().sendMessageBatch(request -> request
+                .queueUrl(sqsUrl)
+                .entries(entries));
 
-        String body;
-        try {
-            body = objectMapper.writeValueAsString(payload);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to serialize SQS payload", e);
-        }
+        response.failed().forEach(failure ->
+                log.warn("Queue rejected event {}: {} {}", failure.id(), failure.code(), failure.message()));
 
-        enqueueExecutor.submit(() -> {
-            try {
-                getClient().sendMessage(SendMessageRequest.builder()
-                        .queueUrl(sqsUrl)
-                        .messageBody(body)
-                        .build());
-                log.info("ENQUEUE completion succeeded userId={} habitId={} date={}", userId, habitId, date);
-            } catch (Exception e) {
-                log.error("ENQUEUE completion failed userId={} habitId={} date={}", userId, habitId, date, e);
-            }
-        });
+        return response.successful().stream()
+                .map(success -> UUID.fromString(success.id()))
+                .collect(Collectors.toSet());
     }
 
     @PreDestroy
     public void shutdown() {
-        enqueueExecutor.shutdown();
+        SqsClient client = this.sqsClient;
+        if (client != null) {
+            client.close();
+        }
     }
 
     private SqsClient getClient() {
@@ -113,7 +98,12 @@ public class CompletionQueueService {
             if (this.sqsClient == null) {
                 SqsClientBuilder builder = SqsClient.builder()
                         .region(Region.of(awsRegion))
-                        .credentialsProvider(DefaultCredentialsProvider.create());
+                        .credentialsProvider(DefaultCredentialsProvider.create())
+                        // The relay holds database row locks while it sends, so a stuck network
+                        // call must give up rather than hold them indefinitely.
+                        .overrideConfiguration(config -> config
+                                .apiCallAttemptTimeout(Duration.ofSeconds(5))
+                                .apiCallTimeout(Duration.ofSeconds(15)));
                 if (endpointOverride != null && !endpointOverride.isBlank()) {
                     builder.endpointOverride(parseEndpoint(endpointOverride));
                 }

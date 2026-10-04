@@ -32,6 +32,13 @@ queue:
   # Leave blank for real AWS. Set to reach a local SQS-compatible broker.
   endpointOverride: ${QUEUE_ENDPOINT_OVERRIDE:}
 
+outbox:
+  relay:
+    # How often the relay looks for events that have not reached the queue yet.
+    fixed-delay-ms: ${OUTBOX_RELAY_DELAY_MS:500}
+  # Published events are kept this long for inspection, then purged.
+  retention-days: 7
+
 springdoc:
   # The scheduled-job endpoints are internal (shared-token auth), not part of the public contract.
   paths-to-exclude: /api/internal/**
