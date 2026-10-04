@@ -7,6 +7,7 @@ export const BACKEND_URL: string = import.meta.env.VITE_API_URL ?? "http://local
 export type Habit = components["schemas"]["HabitResponse"];
 export type HabitInput = components["schemas"]["HabitRequest"];
 export type Achievement = components["schemas"]["UserAchievementDto"];
+export type WeeklySummary = components["schemas"]["WeeklySummaryResponse"];
 type AuthResponse = components["schemas"]["AuthResponse"];
 type Problem = components["schemas"]["ProblemDetail"];
 
@@ -112,6 +113,18 @@ export async function fetchAchievements(): Promise<Achievement[]> {
     },
   });
   if (!res.ok) throw await toError(res, "Failed to fetch achievements");
+  return res.json();
+}
+
+/** The newest finished weekly summary, or null if none has been written yet (204). */
+export async function fetchLatestSummary(): Promise<WeeklySummary | null> {
+  const res = await fetch(`${BACKEND_URL}/api/summaries/latest`, {
+    headers: {
+      ...authHeaders(),
+    },
+  });
+  if (res.status === 204) return null;
+  if (!res.ok) throw await toError(res, "Failed to fetch the weekly summary");
   return res.json();
 }
 

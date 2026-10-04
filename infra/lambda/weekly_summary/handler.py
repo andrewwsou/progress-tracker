@@ -1,6 +1,7 @@
-"""Weekly EventBridge target: tells the API to compute last week's
-per-user activity summary (completions, XP earned) and queue emails.
-Same stdlib-only, HTTP-call-out design as daily_streak_reset.
+"""Weekly EventBridge target: tells the API to request last week's summary
+for every user who completed a habit. The worker then writes each summary
+(with Claude when an API key is configured, from a template otherwise) and
+queues the email. Same stdlib-only, HTTP-call-out design as daily_streak_reset.
 """
 import os
 import urllib.error

@@ -233,6 +233,59 @@
           "userAchievementId"
         ],
         "type" : "object"
+      },
+      "WeeklySummaryResponse" : {
+        "properties" : {
+          "body" : {
+            "type" : "string"
+          },
+          "completions" : {
+            "format" : "int32",
+            "type" : "integer"
+          },
+          "focusHabit" : {
+            "description" : "The habit suggested for attention next week",
+            "type" : "string"
+          },
+          "headline" : {
+            "type" : "string"
+          },
+          "source" : {
+            "description" : "AI when Claude wrote the text, TEMPLATE when the fallback template did",
+            "enum" : [
+              "AI",
+              "TEMPLATE"
+            ],
+            "type" : "string"
+          },
+          "weekEnd" : {
+            "format" : "date",
+            "type" : "string"
+          },
+          "weekStart" : {
+            "format" : "date",
+            "type" : "string"
+          },
+          "writtenAt" : {
+            "format" : "date-time",
+            "type" : "string"
+          },
+          "xpEarned" : {
+            "format" : "int32",
+            "type" : "integer"
+          }
+        },
+        "required" : [
+          "body",
+          "completions",
+          "headline",
+          "source",
+          "weekEnd",
+          "weekStart",
+          "writtenAt",
+          "xpEarned"
+        ],
+        "type" : "object"
       }
     },
     "securitySchemes" : {
@@ -657,6 +710,39 @@
         },
         "tags" : [
           "Habits"
+        ]
+      }
+    },
+    "/api/summaries/latest" : {
+      "get" : {
+        "operationId" : "latest",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/WeeklySummaryResponse"
+                }
+              }
+            },
+            "description" : "The caller's most recent finished weekly summary"
+          },
+          "204" : {
+            "description" : "No weekly summary has been written for the caller yet"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing or invalid bearer token"
+          }
+        },
+        "tags" : [
+          "Summaries"
         ]
       }
     }

@@ -1,6 +1,8 @@
 package com.progresstracker.progressworker.integration;
 
+import com.progresstracker.progressworker.summary.AiSummaryWriter;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -22,6 +24,15 @@ import static org.mockito.Mockito.verify;
  * a normal event, duplicates, garbage, and failures.
  */
 class CompletionPipelineIT extends WorkerIntegrationTestBase {
+
+    @Autowired
+    private AiSummaryWriter aiSummaryWriter;
+
+    @Test
+    void testsCanNeverCallTheRealClaudeApi() {
+        // Pinned off in WorkerIntegrationTestBase, even if the shell exports a key and the flag.
+        assertThat(aiSummaryWriter.isEnabled()).isFalse();
+    }
 
     @Test
     void grantsXpStreakAndFirstAchievementForACompletionEvent() {

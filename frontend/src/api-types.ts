@@ -100,6 +100,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/summaries/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -182,6 +198,27 @@ export interface components {
             unlockedAt: string;
             /** Format: int64 */
             userAchievementId: number;
+        };
+        WeeklySummaryResponse: {
+            body: string;
+            /** Format: int32 */
+            completions: number;
+            /** @description The habit suggested for attention next week */
+            focusHabit?: string;
+            headline: string;
+            /**
+             * @description AI when Claude wrote the text, TEMPLATE when the fallback template did
+             * @enum {string}
+             */
+            source: "AI" | "TEMPLATE";
+            /** Format: date */
+            weekEnd: string;
+            /** Format: date */
+            weekStart: string;
+            /** Format: date-time */
+            writtenAt: string;
+            /** Format: int32 */
+            xpEarned: number;
         };
     };
     responses: never;
@@ -525,6 +562,42 @@ export interface operations {
             };
             /** @description No such habit */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+        };
+    };
+    latest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's most recent finished weekly summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeeklySummaryResponse"];
+                };
+            };
+            /** @description No weekly summary has been written for the caller yet */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid bearer token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -34,6 +34,7 @@ P95_LIMIT_MS="${P95_LIMIT_MS:-200}"
 
 # Read by every `docker compose` call below.
 export COMPOSE_PROJECT_NAME=progress-tracker-load
+export SUMMARY_LLM_ENABLED=false   # load tests never call Claude, whatever the shell has set
 export API_PORT="${API_PORT:-18080}"
 BASE_URL="http://localhost:${API_PORT}"
 

@@ -47,8 +47,9 @@ services:
     environment:
       <<: *backend-environment
       JWT_SECRET: ${JWT_SECRET:-local-development-only-secret-not-for-production}
-      # Unlocks the scheduled-job endpoints (/api/internal/automations/*). Blank keeps them locked.
-      AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:-}
+      # Unlocks the scheduled-job endpoints (/api/internal/automations/*) for this local stack.
+      # A placeholder like the JWT secret above; never use it outside your machine.
+      AUTOMATION_TOKEN: ${AUTOMATION_TOKEN:-local-development-only-token}
     ports:
       # Loopback only: this stack signs tokens with a placeholder secret and is for local use.
       # If you change the port, run the smoke test with BASE_URL=http://localhost:<port>.
@@ -61,7 +62,14 @@ services:
 
   worker:
     build: ./backend/progress-worker
-    environment: *backend-environment
+    environment:
+      <<: *backend-environment
+      # Weekly summaries are written by a template unless BOTH of these are set; then by Claude,
+      # within the daily caps in the worker's application.yaml.
+      SUMMARY_LLM_ENABLED: ${SUMMARY_LLM_ENABLED:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SUMMARY_LLM_MODEL: ${SUMMARY_LLM_MODEL:-claude-opus-5-5}
+      SUMMARY_LLM_MAX_CALLS_PER_DAY: ${SUMMARY_LLM_MAX_CALLS_PER_DAY:-10}
     depends_on:
       # The API creates the shared tables on startup, so the worker waits for it
       # (the worker then adds its own processed_events table).

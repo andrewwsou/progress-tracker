@@ -22,8 +22,10 @@
         <!-- Spring Boot 3.5.7 manages 1.21.3, which cannot talk to Docker Engine 29+. -->
         <testcontainers.version>1.21.4</testcontainers.version>
         <jacoco.version>0.8.14</jacoco.version>
+        <anthropic.version>2.68.0</anthropic.version>
+        <wiremock.version>3.13.2</wiremock.version>
         <!-- Coverage ratchet: `verify` fails if line coverage drops below this. Raise it, never lower it. -->
-        <coverage.minimum>0.68</coverage.minimum>
+        <coverage.minimum>0.78</coverage.minimum>
     </properties>
 
     <dependencies>
@@ -54,6 +56,13 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- Claude API client, used to write weekly summaries. -->
+        <dependency>
+            <groupId>com.anthropic</groupId>
+            <artifactId>anthropic-java</artifactId>
+            <version>${anthropic.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -64,6 +73,13 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Stands in for the Claude API in integration tests, so no key or network is needed. -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>${wiremock.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

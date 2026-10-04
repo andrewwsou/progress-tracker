@@ -32,3 +32,39 @@ worker:
   visibilityTimeoutSeconds: 60
   # Deadline for applying one reward. Bounds how long a transaction waits on a lock.
   processTimeoutSeconds: 5
+
+# Weekly summaries: the API asks for them, this worker writes them (see README "Weekly summaries").
+summary:
+  llm:
+    # Claude is used only when this is true AND a key is set. Off by default, so a key that
+    # happens to be in the environment never turns spending on. Off: no API calls at all.
+    enabled: ${SUMMARY_LLM_ENABLED:false}
+    api-key: ${ANTHROPIC_API_KEY:}
+    # Must be claude-opus-5-5 or claude-sonnet-5-5; anything else falls back to the template.
+    model: ${SUMMARY_LLM_MODEL:claude-opus-5-5}
+    # A short summary needs little reasoning; low effort keeps it fast and cheap.
+    effort: low
+    # Hard cap on one response, thinking included.
+    max-output-tokens: 2048
+    # Per attempt. No retries: if a call fails, the template writes that summary.
+    timeout: 30s
+    max-retries: 0
+    # Blank for the real API. Only tests set it.
+    base-url: ${SUMMARY_LLM_BASE_URL:}
+    # If the model declines a request, re-run it on Anthropic's recommended fallback model.
+    refusal-fallbacks: true
+    # Hard daily caps (UTC day, all workers together). Each call is counted before it is sent,
+    # at its worst case, and never refunded. Past a cap, the template writes the rest of the day.
+    # With these defaults a day costs at most about $1.25 at Opus 5.5 prices; 0 calls stops all calls.
+    max-calls-per-day: ${SUMMARY_LLM_MAX_CALLS_PER_DAY:10}
+    daily-token-budget: 100000
+    # Bigger weeks are written by the template, so one prompt cannot be large.
+    max-habits: 20
+    max-prompt-bytes: 8000
+  job:
+    # How often to look for summaries to write.
+    fixed-delay-ms: 15000
+    batch-size: 5
+    # A claim lasts this long; a summary whose worker crashed is picked up again after it.
+    lease: 5m
+    max-attempts: 3

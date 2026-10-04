@@ -13,4 +13,8 @@ public class EmailService {
     public void queueCompletionEmail(User user, String habitName) {
         log.info("EMAIL_QUEUED userId={} email={} habit={}", user.getId(), user.getEmail(), habitName);
     }
+
+    public void queueWeeklySummaryEmail(long userId, String headline) {
+        log.info("EMAIL_QUEUED userId={} kind=weekly-summary headline=\"{}\"", userId, headline);
+    }
 }

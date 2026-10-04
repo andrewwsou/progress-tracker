@@ -1,14 +1,12 @@
 package com.progresstracker.progresstracker.automation;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.temporal.TemporalAdjusters;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -34,18 +32,24 @@ public class AutomationController {
     }
 
     @PostMapping("/reset-streaks")
-    public Map<String, Object> resetStreaks(@RequestHeader("X-Internal-Token") String token) {
+    public Map<String, Object> resetStreaks(@RequestHeader(value = "X-Internal-Token", required = false) String token) {
         requireValidToken(token);
         int resetCount = streakResetService.resetBrokenStreaks(LocalDate.now());
         return Map.of("resetCount", resetCount, "ranAt", LocalDate.now().toString());
     }
 
+    /**
+     * Asks the worker to write each active user's summary of a week: last week by default, or the
+     * week containing {@code weekStart} (any day of it) to backfill or test a specific week.
+     */
     @PostMapping("/weekly-summary")
-    public Map<String, Object> weeklySummary(@RequestHeader("X-Internal-Token") String token) {
+    public Map<String, Object> weeklySummary(
+            @RequestHeader(value = "X-Internal-Token", required = false) String token,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate weekStart) {
         requireValidToken(token);
-        LocalDate weekStart = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).minusWeeks(1);
-        List<WeeklySummary> summaries = weeklySummaryService.generateSummaries(weekStart);
-        return Map.of("summaryCount", summaries.size(), "weekStart", weekStart.toString());
+        LocalDate week = WeeklySummaryService.startOfWeek(weekStart != null ? weekStart : LocalDate.now().minusWeeks(1));
+        int requested = weeklySummaryService.requestSummaries(week);
+        return Map.of("requestedCount", requested, "weekStart", week.toString());
     }
 
     private void requireValidToken(String token) {

@@ -52,8 +52,9 @@ AWS-free mode** for local development (see below).
 | PUT/DELETE | `/api/habits/{id}` | Edit or delete (204) a habit the caller owns |
 | POST | `/api/habits/{id}/complete` | Record a completion (sync or async, see below) |
 | GET | `/api/achievements` | Unlocked achievements for the current user |
+| GET | `/api/summaries/latest` | The caller's newest finished weekly summary (204 if none yet) |
 | POST | `/api/internal/automations/reset-streaks` | Zero out streaks for habits nobody completed recently. Auth: `X-Internal-Token` header, not JWT — meant for the scheduled Lambda in `infra/lambda`, not end users. |
-| POST | `/api/internal/automations/weekly-summary` | Compute last week's per-user completions/XP and queue summary emails. Same auth model. |
+| POST | `/api/internal/automations/weekly-summary` | Ask for last week's summary for every active user (optional `?weekStart=` for any other week). Same auth model. |
 
 **Contract.** The API is described by an OpenAPI document served at `/v3/api-docs`, browsable at
 `/swagger-ui.html`, and committed as [`backend/progresstracker/openapi.json`](backend/progresstracker/openapi.json).
@@ -215,9 +216,12 @@ PostgreSQL and an SQS-compatible broker in Docker and run the actual services ag
 | [`StreakQueryIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakQueryIT.java) | The single-query streak calculation gives the same answer as counting back one day (or week) at a time, on 120 random completion histories, including across a year boundary. |
 | [`AchievementUnlockIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/AchievementUnlockIT.java) | The XP achievement unlocks when a user's total across habits reaches 100, the streak achievement on the seventh day in a row, and each only once. |
 | [`StreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/StreakResetIT.java) | The nightly streak reset, a single UPDATE, zeroes exactly the streaks that have lapsed and changes nothing else. |
+| [`WeeklySummaryIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/WeeklySummaryIT.java) | The weekly job needs the internal token, asks once per active user (a repeated run adds nothing), and users read only their own newest finished summary. |
+| [`WeeklySummaryJobIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/WeeklySummaryJobIT.java) | The worker against WireMock standing in for the Claude API: a summary is written and its cost recorded; timeouts and server errors are retried and then fall back to the template; refusals, invented habits, and invented numbers fall back too; the daily token budget stops calls; expired claims are taken over; a stale worker cannot overwrite a newer claim; two workers write each summary once. |
 
 **End-to-end**: `scripts/smoke-test.sh` drives the Docker Compose stack over HTTP and waits for
-the worker's reward to appear, covering the hop between the two services.
+the worker's reward to appear, then asks for this week's summary and waits for the worker to
+write it, covering both paths between the two services.
 
 **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all of the above on every
 pull request and every push to `main`, along with a JaCoCo line-coverage gate, the frontend lint, build, and generated-types check, and
@@ -241,6 +245,75 @@ How to run it is in [`load/README.md`](load/README.md); recorded numbers are in
   for the streak, and about ten achievement queries cut to three). The nightly streak reset over
   20,000 habits went from 5.1 s to 0.2 s (one UPDATE instead of 20,000).
 
+## Weekly summaries (Claude)
+
+Every week each active user gets a short summary of their week, written by Claude, shown at the
+top of the app, and queued as an email.
+
+```
+ EventBridge (weekly) -> Lambda -> POST /api/internal/automations/weekly-summary
+      -> one PENDING row per active user in weekly_summaries (one INSERT ... SELECT, repeats ignored)
+ worker timer -> claim rows (FOR UPDATE SKIP LOCKED, with a lease) -> read the user's week (one query)
+      -> Claude writes it (structured output) -> validate it -> READY        -> GET /api/summaries/latest
+                         \-> any failure -> template writes it instead -/
+```
+
+**Why the work is split this way.** A model call takes seconds. The API only records the requests,
+so the scheduled job returns at once. The worker writes the summaries on its own timer thread,
+so a slow model call never delays the queue poller that applies rewards.
+
+**Guardrails.**
+- **Structured output.** The answer is constrained to a JSON schema (`headline`, `body`,
+  `focusHabit`), so it always parses.
+- **Validated against the data.** The focus habit must be one of the user's habits, spelled
+  exactly, and every number in the text must appear in the data. A summary that invents a habit or
+  a statistic is never shown.
+- **Off unless switched on.** The worker makes no Claude calls unless `SUMMARY_LLM_ENABLED=true`
+  *and* `ANTHROPIC_API_KEY` are both set, and the model is Opus 5.5 or Sonnet 5.5. A key that is
+  merely present in your shell does nothing. Tests, CI, and the load harness pin it off.
+- **Hard daily caps.** At most 10 API requests and 100,000 tokens per UTC day, across all
+  workers (`summary.llm.max-calls-per-day`, `daily-token-budget`). Each call is reserved before
+  it is sent, at its worst case (prompt size plus the output cap, doubled if a fallback model may
+  re-run it), in one atomic `INSERT ... ON CONFLICT DO UPDATE ... WHERE` on a per-day row, and
+  never refunded, so timeouts, errors, and two workers racing all count. A week with more than
+  20 habits or a prompt over 8 KB goes to the template. Worst case with the defaults: about
+  $1.25 a day at Opus 5.5 prices ($4/$20 per million tokens); a weekly summary for one user costs
+  about a cent. Setting the call cap to 0 stops every call.
+- **Always a summary.** Claude off, a cap reached, a timeout, a server error, a refusal, a
+  truncated answer, a failed validation, or an unexpected error: in every case a
+  deterministic template writes the summary instead, and the reason is stored with it
+  (`fallback_reason`). API errors are also logged with the API's message.
+- **Bounded time.** Low effort, a cap of 2,048 output tokens, and a 30-second timeout with no
+  retries (a failed call means a template summary, not another paid attempt). Tokens (summed over
+  every attempt when a fallback model answered), latency, and the model that answered are stored
+  on every row, and the day's recorded tokens are checked against the budget too.
+- **Refusal fallback.** Requests opt into server-side fallbacks (`fallbacks: "default"`): if the
+  model declines, the API re-runs the request on Anthropic's recommended fallback model.
+- **Safe to run on several workers.** Rows are claimed in batches with `FOR UPDATE SKIP LOCKED`
+  and a lease, and each row's lease is renewed just before its summary is written, so a slow
+  batch is not claimed twice. A worker that crashes leaves its claim to expire, and another takes
+  the row over. The claim's attempt number works as a fencing token, so a worker that stalled past
+  its lease cannot overwrite the newer copy. After 3 attempts a row is marked FAILED; asking for
+  that week again queues it once more.
+- **Privacy and prompt injection.** Only habit names and numbers are sent, never the user's email.
+  Habit names are user-written text, so the week goes in a tagged JSON block and the prompt says
+  to treat names as data. Whatever comes back still has to pass validation.
+
+**Running it.** Set both `SUMMARY_LLM_ENABLED=true` and `ANTHROPIC_API_KEY` for the worker (see
+`.env.example`); otherwise every summary comes from the template and nothing is sent. The model
+is `claude-opus-5-5` by default (`SUMMARY_LLM_MODEL=claude-sonnet-5-5` is cheaper). Locally, the smoke test asks for this week's summaries; you can too. A week is
+summarized once, so a summary of the current week covers only the days so far:
+
+```
+curl -X POST -H "X-Internal-Token: local-development-only-token" \
+  "http://localhost:8080/api/internal/automations/weekly-summary?weekStart=$(date -u +%F)"
+```
+
+**Tests** run without a key: unit tests cover the validator, the template, and every branch of
+the AI-or-template decision, and `WeeklySummaryJobIT` runs the real Claude SDK against WireMock
+for success, timeout and retry, server errors, refusals, fallback token counts, invented output,
+the budget, a backlog, and claims (leases, renewal, fencing, two workers at once).
+
 ## Scheduled automations (infra/)
 
 Two batch jobs that don't belong on the request path:
@@ -248,11 +321,11 @@ Two batch jobs that don't belong on the request path:
 - **Nightly streak reset** — a habit's `currentStreak` is normally only recalculated on its next
   completion, so a habit a user abandoned keeps showing a stale streak indefinitely. This job
   zeroes it out once the gap is long enough (`StreakResetService`), in a single UPDATE.
-- **Weekly summary** — aggregates each user's completions/XP for the past week
-  (`WeeklySummaryService`).
+- **Weekly summary** — asks for each active user's summary of the past week
+  (`WeeklySummaryService`); the worker writes them (see "Weekly summaries" above).
 
-Both are implemented as pure service logic in the API (tested with no AWS needed —
-`StreakResetServiceTest`, `StreakResetIT`, `WeeklySummaryServiceTest`) behind internal endpoints, plus a thin
+Both are implemented as service logic in the API (tested with no AWS needed —
+`StreakResetServiceTest`, `StreakResetIT`, `WeeklySummaryIT`) behind internal endpoints, plus a thin
 invocation layer meant to run on AWS:
 
 - `infra/lambda/` — stdlib-only Python handlers that POST to the internal endpoints. Verified

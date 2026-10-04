@@ -6,6 +6,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -28,8 +29,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Runs the real worker (poller thread, AWS SDK client, JPA) against PostgreSQL and an
  * SQS-compatible broker in Docker. The containers and the Spring context are started once
  * and shared by every integration test class; each test creates its own users and habits.
+ *
+ * Claude is pinned off here, so an API key or flag exported in the developer's shell cannot
+ * reach a test (these properties outrank environment variables). The one test class that
+ * exercises the Claude path turns it on and points it at WireMock.
  */
 @SpringBootTest
+@TestPropertySource(properties = {
+        "summary.llm.enabled=false",
+        "summary.llm.api-key=",
+        "summary.llm.base-url=http://127.0.0.1:9" // nothing listens there, so a stray call fails at once
+})
 abstract class WorkerIntegrationTestBase {
 
     /** Same value as the production queue's redrive policy in infra/terraform/sqs.tf. */
@@ -63,6 +73,9 @@ abstract class WorkerIntegrationTestBase {
         // Short poll and visibility timeout so a failed message is redelivered in seconds.
         registry.add("worker.waitTimeSeconds", () -> "1");
         registry.add("worker.visibilityTimeoutSeconds", () -> "2");
+
+        // The weekly-summary timer stays off in tests; the summary tests run the job by hand.
+        registry.add("summary.job.scheduling-enabled", () -> "false");
     }
 
     @Autowired

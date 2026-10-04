@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Habit, Achievement } from "./api";
+import type { Habit, Achievement, WeeklySummary } from "./api";
 import {
   ApiError,
   fetchHabits,
@@ -10,6 +10,7 @@ import {
   registerUser,
   completeHabit,
   fetchAchievements,
+  fetchLatestSummary,
 } from "./api";
 
 type AuthMode = "login" | "register";
@@ -29,6 +30,7 @@ function App() {
 
   const [habits, setHabits] = useState<Habit[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [summary, setSummary] = useState<WeeklySummary | null>(null);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -53,9 +55,14 @@ function App() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [h, a] = await Promise.all([fetchHabits(), fetchAchievements().catch(() => [])]);
+      const [h, a, s] = await Promise.all([
+        fetchHabits(),
+        fetchAchievements().catch(() => []),
+        fetchLatestSummary().catch(() => null),
+      ]);
       setHabits(h);
       setAchievements(a as Achievement[]);
+      setSummary(s);
     } catch (err) {
       // 401 means the saved token is no longer accepted (expired, or the account is gone).
       // Drop it and show the login form instead of an empty page.
@@ -64,6 +71,7 @@ function App() {
         setToken(null);
         setHabits([]);
         setAchievements([]);
+        setSummary(null);
         return;
       }
       throw err;
@@ -75,9 +83,14 @@ function App() {
   /** Reloads without the loading indicator, for refreshes the user did not ask for. */
   async function refreshQuietly() {
     try {
-      const [h, a] = await Promise.all([fetchHabits(), fetchAchievements().catch(() => [])]);
+      const [h, a, s] = await Promise.all([
+        fetchHabits(),
+        fetchAchievements().catch(() => []),
+        fetchLatestSummary().catch(() => null),
+      ]);
       setHabits(h);
       setAchievements(a as Achievement[]);
+      setSummary(s);
     } catch {
       // A background refresh failing is not worth interrupting the user for.
     }
@@ -102,6 +115,7 @@ function App() {
     setToken(null);
     setHabits([]);
     setAchievements([]);
+    setSummary(null);
   }
 
   async function handleSubmitHabit(e: React.FormEvent) {
@@ -187,6 +201,19 @@ function App() {
         </div>
         <button onClick={handleLogout}>Logout</button>
       </header>
+
+      {summary && (
+        <section style={{ marginTop: "1.25rem", padding: "1rem", border: "1px solid #eee", borderRadius: 12 }}>
+          <h2 style={{ marginTop: 0 }}>Your week of {summary.weekStart}</h2>
+          <p style={{ margin: "0 0 0.5rem", fontWeight: 600 }}>{summary.headline}</p>
+          <p style={{ margin: "0 0 0.5rem" }}>{summary.body}</p>
+          <p style={{ margin: 0, color: "#666", fontSize: 14 }}>
+            {summary.completions} {summary.completions === 1 ? "completion" : "completions"} • {summary.xpEarned} XP
+            {summary.focusHabit && <> • Focus next week: {summary.focusHabit}</>}
+            {summary.source === "AI" && <> • Written by Claude</>}
+          </p>
+        </section>
+      )}
 
       <section style={{ marginTop: "1.25rem", padding: "1rem", border: "1px solid #eee", borderRadius: 12 }}>
         <h2 style={{ marginTop: 0 }}>Unlocked Achievements</h2>

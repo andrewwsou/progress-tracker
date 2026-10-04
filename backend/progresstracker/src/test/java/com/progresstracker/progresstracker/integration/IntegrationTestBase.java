@@ -51,7 +51,11 @@ abstract class IntegrationTestBase {
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("jwt.secret", () -> "integration-test-secret-at-least-32-bytes-long");
+        registry.add("automation.internal-token", () -> AUTOMATION_TOKEN);
     }
+
+    /** Unlocks the scheduled-job endpoints (/api/internal/automations/*) in tests. */
+    protected static final String AUTOMATION_TOKEN = "integration-test-automation-token";
 
     @Autowired
     protected TestRestTemplate rest;

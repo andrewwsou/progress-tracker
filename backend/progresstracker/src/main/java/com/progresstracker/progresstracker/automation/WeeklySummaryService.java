@@ -1,65 +1,47 @@
 package com.progresstracker.progresstracker.automation;
 
-import com.progresstracker.progresstracker.model.Habit;
-import com.progresstracker.progresstracker.model.User;
-import com.progresstracker.progresstracker.repository.HabitEntryRepository;
-import com.progresstracker.progresstracker.repository.HabitRepository;
-import com.progresstracker.progresstracker.repository.UserRepository;
+import com.progresstracker.progresstracker.repository.WeeklySummaryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
+import java.time.temporal.TemporalAdjusters;
 
 /**
- * Builds a per-user activity summary for a given week. Meant to run on a
- * weekly schedule (EventBridge -> Lambda -> this endpoint) and queue a
- * summary email per user (logged here in place of an SES integration).
+ * Asks for each active user's weekly summary. Meant to run on a weekly schedule
+ * (EventBridge -> Lambda -> this endpoint). It only records the requests; the worker writes the
+ * summaries, with Claude when an API key is configured and from a template otherwise, so a slow
+ * model call never holds up this request.
  */
 @Service
 public class WeeklySummaryService {
 
     private static final Logger log = LoggerFactory.getLogger(WeeklySummaryService.class);
 
-    private final UserRepository userRepository;
-    private final HabitRepository habitRepository;
-    private final HabitEntryRepository habitEntryRepository;
+    private final WeeklySummaryRepository weeklySummaryRepository;
 
-    public WeeklySummaryService(UserRepository userRepository,
-                                 HabitRepository habitRepository,
-                                 HabitEntryRepository habitEntryRepository) {
-        this.userRepository = userRepository;
-        this.habitRepository = habitRepository;
-        this.habitEntryRepository = habitEntryRepository;
+    public WeeklySummaryService(WeeklySummaryRepository weeklySummaryRepository) {
+        this.weeklySummaryRepository = weeklySummaryRepository;
     }
 
-    @Transactional(readOnly = true)
-    public List<WeeklySummary> generateSummaries(LocalDate weekStart) {
+    /**
+     * @param anyDayOfWeek any date in the week to summarize; weeks run Monday to Sunday
+     * @return how many summaries were newly requested
+     */
+    @Transactional
+    public int requestSummaries(LocalDate anyDayOfWeek) {
+        LocalDate weekStart = startOfWeek(anyDayOfWeek);
         LocalDate weekEnd = weekStart.plusDays(6);
-        List<WeeklySummary> summaries = new ArrayList<>();
 
-        for (User user : userRepository.findAll()) {
-            List<Habit> habits = habitRepository.findByUser(user);
+        int requested = weeklySummaryRepository.requestForActiveUsers(weekStart, weekEnd);
+        log.info("WEEKLY_SUMMARY_REQUESTED count={} week={}..{}", requested, weekStart, weekEnd);
+        return requested;
+    }
 
-            long completions = 0;
-            long xpEarned = 0;
-            for (Habit habit : habits) {
-                completions += habitEntryRepository.countByHabitAndCompletedDateBetween(habit, weekStart, weekEnd);
-                xpEarned += habitEntryRepository.sumXpByHabitAndCompletedDateBetween(habit, weekStart, weekEnd);
-            }
-
-            WeeklySummary summary = new WeeklySummary(
-                    user.getId(), user.getEmail(), weekStart, weekEnd, habits.size(), completions, xpEarned);
-            summaries.add(summary);
-
-            log.info("WEEKLY_SUMMARY_QUEUED userId={} email={} habits={} completions={} xpEarned={} week={}..{}",
-                    summary.userId(), summary.email(), summary.habitCount(), summary.completions(),
-                    summary.xpEarned(), weekStart, weekEnd);
-        }
-
-        return summaries;
+    public static LocalDate startOfWeek(LocalDate anyDayOfWeek) {
+        return anyDayOfWeek.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
     }
 }

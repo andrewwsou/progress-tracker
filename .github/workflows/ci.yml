@@ -13,6 +13,10 @@ concurrency:
 permissions:
   contents: read
 
+# CI never calls the Claude API: summaries are written by the template, and the tests use WireMock.
+env:
+  SUMMARY_LLM_ENABLED: "false"
+
 jobs:
   backend:
     name: Backend (${{ matrix.module }})
