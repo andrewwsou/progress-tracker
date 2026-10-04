@@ -183,7 +183,7 @@ public class SqsPoller implements SmartLifecycle {
         if (sqsClient == null) {
             SqsClientBuilder builder = SqsClient.builder()
                     .region(Region.of(awsRegion))
-                    .credentialsProvider(DefaultCredentialsProvider.create())
+                    .credentialsProvider(DefaultCredentialsProvider.builder().build())
                     // A cap on each call, retries included, so a queue that accepts connections but
                     // never answers cannot hold the poll loop (or a worker's delete) for minutes.
                     .overrideConfiguration(o -> o.apiCallTimeout(Duration.ofSeconds(waitTimeSeconds + 10L)));

@@ -52,6 +52,10 @@ abstract class IntegrationTestBase {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("jwt.secret", () -> "integration-test-secret-at-least-32-bytes-long");
         registry.add("automation.internal-token", () -> AUTOMATION_TOKEN);
+        // The JDK client sends concurrent requests concurrently. Apache HttpClient, which Spring
+        // would otherwise pick because the AWS SDK brings it in, allows 5 connections per host by
+        // default and would quietly turn the "50 at once" tests into 5 at a time.
+        registry.add("spring.http.client.factory", () -> "jdk");
     }
 
     /** Unlocks the scheduled-job endpoints (/api/internal/automations/*) in tests. */

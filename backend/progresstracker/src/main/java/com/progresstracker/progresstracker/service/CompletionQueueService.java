@@ -98,7 +98,7 @@ public class CompletionQueueService {
             if (this.sqsClient == null) {
                 SqsClientBuilder builder = SqsClient.builder()
                         .region(Region.of(awsRegion))
-                        .credentialsProvider(DefaultCredentialsProvider.create())
+                        .credentialsProvider(DefaultCredentialsProvider.builder().build())
                         // The relay holds database row locks while it sends, so a stuck network
                         // call must give up rather than hold them indefinitely.
                         .overrideConfiguration(config -> config

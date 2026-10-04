@@ -5,6 +5,7 @@ import com.progresstracker.progresstracker.repository.HabitRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.TestPropertySource;
@@ -50,6 +51,13 @@ class HabitCompletionConcurrencyIT extends IntegrationTestBase {
         assertThat(habit.get("xp_total")).isEqualTo(10);
         assertThat(habit.get("current_streak")).isEqualTo(1);
         assertThat(habit.get("longest_streak")).isEqualTo(1);
+    }
+
+    @Test
+    void theTestClientDoesNotQueueConcurrentRequests() {
+        // Guards every concurrency test here: a pooled client (5 connections per host by default)
+        // would let them pass while sending their requests a few at a time.
+        assertThat(rest.getRestTemplate().getRequestFactory()).isInstanceOf(JdkClientHttpRequestFactory.class);
     }
 
     @Test
