@@ -76,8 +76,8 @@ services:
     # On SIGTERM the worker stops polling and finishes what it has (up to 25 s); give it that long.
     stop_grace_period: 35s
     depends_on:
-      # The API creates the shared tables on startup, so the worker waits for it
-      # (the worker then adds its own processed_events table).
+      # The API migrates the shared schema on startup (Flyway); the worker only checks that its
+      # entities match it, so it waits for the API.
       api:
         condition: service_healthy
       sqs:

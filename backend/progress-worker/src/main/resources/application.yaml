@@ -21,7 +21,9 @@ spring:
     # No web requests read entities, so there is no session to keep open for them.
     open-in-view: false
     hibernate:
-      ddl-auto: update
+      # The API owns the schema and migrates it (Flyway) before this worker starts. The worker only
+      # checks at startup that its entity copies still match it, so drift fails fast.
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:

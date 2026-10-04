@@ -65,6 +65,8 @@ abstract class WorkerIntegrationTestBase {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+        // The schema the API's migrations create (run from the module directory, as Maven does).
+        registry.add("spring.flyway.locations", () -> "filesystem:../progresstracker/src/main/resources/db/migration");
 
         registry.add("queue.enabled", () -> "true");
         registry.add("queue.sqsUrl", () -> QUEUE_URL);

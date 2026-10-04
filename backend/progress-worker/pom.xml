@@ -91,6 +91,19 @@
             <artifactId>postgresql</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Tests build the schema from the API's migrations, as production does (the API owns them). -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Stands in for the Claude API in integration tests, so no key or network is needed. -->
         <dependency>
             <groupId>org.wiremock</groupId>

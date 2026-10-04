@@ -40,7 +40,7 @@ AWS-free mode** for local development (see below).
 
 | Service | Path | Stack |
 |---|---|---|
-| API | `backend/progresstracker` | Spring Boot 3.5 (Java 17), Spring Security + JWT, JPA/Hibernate, PostgreSQL |
+| API | `backend/progresstracker` | Spring Boot 3.5 (Java 17), Spring Security + JWT, JPA/Hibernate, PostgreSQL, Flyway migrations |
 | Worker | `backend/progress-worker` | Spring Boot 3.5 (Java 17), JPA/Hibernate, PostgreSQL, AWS SQS long-polling, Actuator + Micrometer/Prometheus (`:8081`) |
 | Frontend | `frontend` | React 19 + Vite |
 
@@ -206,6 +206,21 @@ Requires Postgres 14+, Java 17, and Node 20.19+ (or 22.12+).
 **Configuration.** No secrets live in the repo. Every deployment-specific value (JWT secret,
 database credentials, queue URL, automation token) is an environment variable with a
 local-dev default where one is safe; [`.env.example`](.env.example) lists them all.
+
+## Database schema
+
+The schema is defined by versioned SQL migrations in
+[`backend/progresstracker/src/main/resources/db/migration`](backend/progresstracker/src/main/resources/db/migration),
+which the API applies with [Flyway](https://flywaydb.org/) when it starts. Both services run
+Hibernate with `ddl-auto=validate`: they never change the schema, and they refuse to start if
+their entities no longer match it. That matters here because the API and the worker each keep
+their own copies of the shared entities; a column one side renames without a migration now fails
+at startup (and in every integration test) instead of silently creating a second column. The
+worker's tests build their database from the same migration files.
+
+`V1__baseline.sql` is the schema Hibernate used to create, checked column by column against a
+database it created. A local database from before migrations is adopted as V1 automatically.
+To change the schema, add the next `V<n>__description.sql`; never edit one that has been applied.
 
 ## Tests
 
