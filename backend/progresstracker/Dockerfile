@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- build: compile and package the jar ----
-FROM maven:3.9-eclipse-temurin-17 AS build
+FROM maven:3-eclipse-temurin-24 AS build
 WORKDIR /build
 COPY pom.xml .
 COPY src ./src
