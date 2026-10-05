@@ -21,10 +21,10 @@ variable "automation_token" {
   sensitive   = true
 }
 
-variable "daily_reset_schedule" {
-  description = "EventBridge cron expression for the nightly streak-reset job (UTC)"
+variable "streak_reset_schedule" {
+  description = "EventBridge cron expression for the streak-reset job (UTC). Each habit is judged on its owner's local date, so it runs hourly to reach every time zone's midnight within the hour."
   type        = string
-  default     = "cron(0 7 * * ? *)" # 07:00 UTC nightly
+  default     = "cron(0 * * * ? *)" # at the start of every hour
 }
 
 variable "weekly_summary_schedule" {

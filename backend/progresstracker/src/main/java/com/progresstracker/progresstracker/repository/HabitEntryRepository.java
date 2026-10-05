@@ -17,6 +17,9 @@ public interface HabitEntryRepository extends JpaRepository<HabitEntry, Long> {
 
     long countByHabitAndCompletedDateBetween(Habit habit, LocalDate startInclusive, LocalDate endInclusive);
 
+    /** Whether the habit has a completion on or after the date (later dates exist after a zone change). */
+    boolean existsByHabitAndCompletedDateGreaterThanEqual(Habit habit, LocalDate date);
+
     @Query("select coalesce(sum(he.xpEarned), 0) from HabitEntry he " +
             "where he.habit = :habit and he.completedDate between :startInclusive and :endInclusive")
     long sumXpByHabitAndCompletedDateBetween(@Param("habit") Habit habit,

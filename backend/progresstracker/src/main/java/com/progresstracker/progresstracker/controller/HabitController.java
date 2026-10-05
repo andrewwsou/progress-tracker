@@ -8,6 +8,7 @@ import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
 import com.progresstracker.progresstracker.repository.UserRepository;
 import com.progresstracker.progresstracker.service.HabitProgressService;
+import com.progresstracker.progresstracker.service.UserCalendar;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -37,6 +38,7 @@ public class HabitController {
     private final UserRepository userRepository;
     private final HabitProgressService habitProgressService;
     private final HabitEntryRepository habitEntryRepository;
+    private final UserCalendar calendar;
 
     @Value("${queue.enabled:false}")
     private boolean queueEnabled;
@@ -44,11 +46,13 @@ public class HabitController {
     public HabitController(HabitRepository habitRepository,
                            UserRepository userRepository,
                            HabitProgressService habitProgressService,
-                           HabitEntryRepository habitEntryRepository) {
+                           HabitEntryRepository habitEntryRepository,
+                           UserCalendar calendar) {
         this.habitRepository = habitRepository;
         this.userRepository = userRepository;
         this.habitProgressService = habitProgressService;
         this.habitEntryRepository = habitEntryRepository;
+        this.calendar = calendar;
     }
 
     @GetMapping
@@ -128,7 +132,7 @@ public class HabitController {
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Habit not found"));
 
             // Any other constraint failure rolled this completion back. Never report that as success.
-            if (!habitProgressService.alreadyCompletedForPeriod(updated, LocalDate.now())) {
+            if (!habitProgressService.alreadyCompletedForPeriod(updated, calendar.today(updated.getUser()))) {
                 throw e;
             }
         }
@@ -176,7 +180,7 @@ public class HabitController {
     private HabitResponse toResponse(Habit habit) {
         applyGoalDefaults(habit);
 
-        LocalDate today = LocalDate.now();
+        LocalDate today = calendar.today(habit.getUser());
         int progressCount;
         if (habit.getGoalPeriod() == Habit.GoalPeriod.WEEKLY) {
             LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));

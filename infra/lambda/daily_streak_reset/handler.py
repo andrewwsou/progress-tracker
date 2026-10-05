@@ -1,5 +1,6 @@
-"""Nightly EventBridge target: tells the API to zero out streaks for habits
-nobody completed recently. Calls the API instead of touching Postgres
+"""Hourly EventBridge target: tells the API to zero out streaks for habits
+nobody completed recently, judged on each owner's local date (so every time
+zone's midnight is covered within the hour). Calls the API instead of touching Postgres
 directly so the Lambda needs no VPC/DB access - just outbound HTTPS.
 
 Stdlib-only (urllib) so the deployment package needs no pip install/layer.

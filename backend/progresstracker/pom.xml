@@ -18,6 +18,8 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- Empty unless JaCoCo's agent sets it; referenced by the test plugins' argLine. -->
+        <argLine/>
         <aws.sdk.version>2.55.10</aws.sdk.version>
         <jacoco.version>0.8.15</jacoco.version>
         <springdoc.version>2.9.1</springdoc.version>
@@ -128,10 +130,24 @@
                 </configuration>
             </plugin>
 
+            <!-- Tests run in UTC whatever the developer's machine is set to, as they do in CI. The
+                 code under test takes "today" from each user's time zone; a test's own dates
+                 must not depend on where it happens to run. @{argLine} keeps JaCoCo's agent. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -Duser.timezone=UTC</argLine>
+                </configuration>
+            </plugin>
+
             <!-- Runs *IT classes during `verify`; `test` stays fast and Docker-free. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -Duser.timezone=UTC</argLine>
+                </configuration>
             </plugin>
 
             <plugin>

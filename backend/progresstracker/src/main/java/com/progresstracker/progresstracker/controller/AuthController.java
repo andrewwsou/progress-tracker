@@ -3,6 +3,7 @@ package com.progresstracker.progresstracker.controller;
 import com.progresstracker.progresstracker.dto.AuthResponse;
 import com.progresstracker.progresstracker.dto.LoginRequest;
 import com.progresstracker.progresstracker.dto.RegisterRequest;
+import com.progresstracker.progresstracker.dto.validation.TimeZoneIdValidator;
 import com.progresstracker.progresstracker.model.User;
 import com.progresstracker.progresstracker.repository.UserRepository;
 import com.progresstracker.progresstracker.security.JwtService;
@@ -50,6 +51,9 @@ public class AuthController {
 
         String hash = passwordEncoder.encode(request.password());
         User user = new User(request.email(), hash);
+        if (request.timeZone() != null && TimeZoneIdValidator.isRegionId(request.timeZone())) {
+            user.setTimeZone(request.timeZone());
+        }
         userRepository.save(user);
 
         return new AuthResponse(jwtService.generateToken(user.getEmail()));

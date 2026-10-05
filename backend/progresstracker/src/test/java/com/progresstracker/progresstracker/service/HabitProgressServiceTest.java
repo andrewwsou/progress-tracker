@@ -1,5 +1,7 @@
 package com.progresstracker.progresstracker.service;
 
+import java.time.Clock;
+import java.time.ZoneOffset;
 import jakarta.persistence.EntityManager;
 import org.mockito.InOrder;
 import org.springframework.web.server.ResponseStatusException;
@@ -45,13 +47,16 @@ class HabitProgressServiceTest {
     @Mock
     private EntityManager entityManager;
 
+    /** Every test runs on this day (the users are in UTC, the default). */
+    private static final LocalDate TODAY = LocalDate.of(2026, 7, 16);
+
     private HabitProgressService service;
 
     @BeforeEach
     void setUp() {
         service = new HabitProgressService(
                 habitRepository, habitEntryRepository, achievementService, outboxEventRepository, new ObjectMapper(),
-                entityManager);
+                entityManager, new UserCalendar(Clock.fixed(TODAY.atTime(12, 0).toInstant(ZoneOffset.UTC), ZoneOffset.UTC)));
         lenient().when(habitRepository.save(any(Habit.class))).thenAnswer(inv -> inv.getArgument(0));
         // The habit exists and is managed: completeToday locks its row and refreshes it in place.
         lenient().when(habitRepository.lockById(any())).thenAnswer(inv -> Optional.of(inv.getArgument(0, Long.class)));
@@ -72,7 +77,7 @@ class HabitProgressServiceTest {
     @Test
     void completeToday_firstEverCompletion_startsStreakAtOne() {
         Habit habit = dailyHabit(0, 0, null);
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any())).thenReturn(Optional.empty());
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(false);
 
         Habit result = service.completeToday(habit);
 
@@ -84,9 +89,9 @@ class HabitProgressServiceTest {
 
     @Test
     void completeToday_consecutiveDay_incrementsStreakAndXp() {
-        LocalDate yesterday = LocalDate.now().minusDays(1);
+        LocalDate yesterday = TODAY.minusDays(1);
         Habit habit = dailyHabit(4, 4, yesterday);
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any())).thenReturn(Optional.empty());
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(false);
 
         Habit result = service.completeToday(habit);
 
@@ -97,9 +102,9 @@ class HabitProgressServiceTest {
 
     @Test
     void completeToday_afterGapInDays_resetsStreakToOne() {
-        LocalDate threeDaysAgo = LocalDate.now().minusDays(3);
+        LocalDate threeDaysAgo = TODAY.minusDays(3);
         Habit habit = dailyHabit(9, 9, threeDaysAgo);
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any())).thenReturn(Optional.empty());
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(false);
 
         Habit result = service.completeToday(habit);
 
@@ -111,17 +116,17 @@ class HabitProgressServiceTest {
     void completeToday_locksAndReReadsTheHabitBeforeComputingTheStreak() {
         // The caller's copy: streak 1, last completed two days ago. Before the lock was taken, the
         // nightly reset zeroed that lapsed streak, so the row now says 0.
-        Habit habit = dailyHabit(1, 1, LocalDate.now().minusDays(2));
+        Habit habit = dailyHabit(1, 1, TODAY.minusDays(2));
         doAnswer(inv -> {
             habit.setCurrentStreak(0);
             return null;
         }).when(entityManager).refresh(habit);
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any())).thenReturn(Optional.empty());
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(false);
 
         Habit result = service.completeToday(habit);
 
         assertThat(result.getCurrentStreak()).isEqualTo(1);
-        assertThat(result.getLastCompletedDate()).isEqualTo(LocalDate.now());
+        assertThat(result.getLastCompletedDate()).isEqualTo(TODAY);
         InOrder order = inOrder(habitRepository, entityManager);
         order.verify(habitRepository).lockById(42L);
         order.verify(entityManager).refresh(habit);
@@ -132,15 +137,14 @@ class HabitProgressServiceTest {
     void completeToday_aCompletionThatCommittedMeanwhileIsSeenAfterTheLock() {
         // The caller's copy: streak 4, last completed yesterday. Another request completed the
         // habit today and committed while this one waited for the lock.
-        Habit habit = dailyHabit(4, 4, LocalDate.now().minusDays(1));
+        Habit habit = dailyHabit(4, 4, TODAY.minusDays(1));
         doAnswer(inv -> {
             habit.setCurrentStreak(5);
             habit.setLongestStreak(5);
-            habit.setLastCompletedDate(LocalDate.now());
+            habit.setLastCompletedDate(TODAY);
             return null;
         }).when(entityManager).refresh(habit);
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any()))
-                .thenReturn(Optional.of(new HabitEntry(habit, LocalDate.now(), 18)));
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(true);
 
         Habit result = service.completeToday(habit);
 
@@ -151,11 +155,11 @@ class HabitProgressServiceTest {
 
     @Test
     void completeToday_aHabitNotInThePersistenceContextIsLoadedFresh() {
-        Habit detached = dailyHabit(4, 4, LocalDate.now().minusDays(1));
-        Habit current = dailyHabit(4, 4, LocalDate.now().minusDays(1));
+        Habit detached = dailyHabit(4, 4, TODAY.minusDays(1));
+        Habit current = dailyHabit(4, 4, TODAY.minusDays(1));
         when(entityManager.contains(detached)).thenReturn(false);
         when(entityManager.find(Habit.class, 42L)).thenReturn(current);
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(current), any())).thenReturn(Optional.empty());
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(current), any())).thenReturn(false);
 
         Habit result = service.completeToday(detached);
 
@@ -177,9 +181,8 @@ class HabitProgressServiceTest {
 
     @Test
     void completeToday_alreadyCompletedForToday_isNoOpAndSkipsAchievementCheck() {
-        Habit habit = dailyHabit(3, 3, LocalDate.now());
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any()))
-                .thenReturn(Optional.of(new HabitEntry(habit, LocalDate.now(), 10)));
+        Habit habit = dailyHabit(3, 3, TODAY);
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(true);
 
         Habit result = service.completeToday(habit);
 
@@ -190,8 +193,8 @@ class HabitProgressServiceTest {
 
     @Test
     void recordCompletionOnly_writesEntryWithZeroXpAndDoesNotTouchStreak() {
-        Habit habit = dailyHabit(2, 2, LocalDate.now().minusDays(1));
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any())).thenReturn(Optional.empty());
+        Habit habit = dailyHabit(2, 2, TODAY.minusDays(1));
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(false);
 
         Habit result = service.recordCompletionOnly(habit);
 
@@ -206,7 +209,7 @@ class HabitProgressServiceTest {
     @Test
     void recordCompletionOnly_writesAnOutboxEventDescribingTheCompletion() throws Exception {
         Habit habit = dailyHabit(0, 0, null);
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any())).thenReturn(Optional.empty());
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(false);
 
         service.recordCompletionOnly(habit);
 
@@ -221,15 +224,14 @@ class HabitProgressServiceTest {
         assertThat(message.get("eventId").asText()).isEqualTo(event.getId().toString());
         assertThat(message.get("userId").asLong()).isEqualTo(7L);
         assertThat(message.get("habitId").asLong()).isEqualTo(42L);
-        assertThat(message.get("date").asText()).isEqualTo(LocalDate.now().toString());
+        assertThat(message.get("date").asText()).isEqualTo(TODAY.toString());
         assertThat(message.hasNonNull("occurredAt")).isTrue();
     }
 
     @Test
     void recordCompletionOnly_alreadyCompletedForPeriod_isNoOp() {
-        Habit habit = dailyHabit(2, 2, LocalDate.now());
-        when(habitEntryRepository.findByHabitAndCompletedDate(eq(habit), any()))
-                .thenReturn(Optional.of(new HabitEntry(habit, LocalDate.now(), 0)));
+        Habit habit = dailyHabit(2, 2, TODAY);
+        when(habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(eq(habit), any())).thenReturn(true);
 
         service.recordCompletionOnly(habit);
 

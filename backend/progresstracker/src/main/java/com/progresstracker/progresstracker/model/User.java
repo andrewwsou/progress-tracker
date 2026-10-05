@@ -2,6 +2,8 @@ package com.progresstracker.progresstracker.model;
 
 import jakarta.persistence.*;
 
+import java.time.ZoneId;
+
 @Entity
 @Table(name = "app_user")
 public class User {
@@ -16,6 +18,9 @@ public class User {
     @Column(nullable = false)
     private String passwordHash;
 
+    /** IANA time zone id; the user's calendar days are counted in it. */
+    @Column(name = "time_zone", nullable = false, length = 64)
+    private String timeZone = "UTC";
 
     public User() {}
 
@@ -46,5 +51,17 @@ public class User {
 
     public void setPasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
+    }
+
+    public String getTimeZone() {
+        return timeZone;
+    }
+
+    public void setTimeZone(String timeZone) {
+        this.timeZone = timeZone;
+    }
+
+    public ZoneId zone() {
+        return ZoneId.of(timeZone);
     }
 }

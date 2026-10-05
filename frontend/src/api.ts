@@ -8,6 +8,7 @@ export type Habit = components["schemas"]["HabitResponse"];
 export type HabitInput = components["schemas"]["HabitRequest"];
 export type Achievement = components["schemas"]["UserAchievementDto"];
 export type WeeklySummary = components["schemas"]["WeeklySummaryResponse"];
+export type Profile = components["schemas"]["ProfileResponse"];
 type AuthResponse = components["schemas"]["AuthResponse"];
 type Problem = components["schemas"]["ProblemDetail"];
 
@@ -46,11 +47,20 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
   }
 }
 
+/** The browser's IANA time zone, e.g. "America/Los_Angeles"; the API counts the user's days in it. */
+export function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function registerUser(email: string, password: string): Promise<string> {
   const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, timeZone: browserTimeZone() }),
   });
   if (!res.ok) throw await toError(res, "Failed to register");
 
@@ -147,6 +157,35 @@ export async function completeHabit(habitId: number): Promise<Habit> {
   });
   if (!res.ok) throw await toError(res, "Failed to complete habit");
   return res.json();
+}
+
+export async function fetchProfile(): Promise<Profile> {
+  const res = await fetch(`${BACKEND_URL}/api/me`, { headers: { ...authHeaders() } });
+  if (!res.ok) throw await toError(res, "Failed to load your profile");
+  return res.json();
+}
+
+export async function updateProfile(timeZone: string): Promise<Profile> {
+  const res = await fetch(`${BACKEND_URL}/api/me`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ timeZone }),
+  });
+  if (!res.ok) throw await toError(res, "Failed to update your profile");
+  return res.json();
+}
+
+/**
+ * Makes the account's time zone match this browser's (a new device, or travel). Returns true if
+ * it changed, in which case "today" may have moved and the dashboard should be reloaded.
+ */
+export async function syncTimeZone(): Promise<boolean> {
+  const zone = browserTimeZone();
+  if (!zone) return false;
+  const profile = await fetchProfile();
+  if (profile.timeZone === zone) return false;
+  await updateProfile(zone);
+  return true;
 }
 
 /** A live update from the API: something changed, so read the new state. */

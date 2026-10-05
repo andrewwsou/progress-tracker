@@ -9,6 +9,7 @@ import {
   fetchHabits,
   fetchLatestSummary,
   streamEvents,
+  syncTimeZone,
   updateHabit,
 } from "../api";
 import { errorText, longDate } from "../format";
@@ -148,6 +149,19 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
       pause();
     };
   }, [refreshQuietly, onSignOut]);
+
+  // The account counts the user's days in its time zone; keep it matching this browser's. If it
+  // changed, "today" may have moved, so read everything again. A failure here is not worth a banner.
+  useEffect(() => {
+    let active = true;
+    syncTimeZone().then(
+      (changed) => active && changed && void load(),
+      () => undefined,
+    );
+    return () => {
+      active = false;
+    };
+  }, [load]);
 
   // First load. A response that arrives after the dashboard has gone (signed out) is dropped.
   useEffect(() => {

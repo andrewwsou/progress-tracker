@@ -1,6 +1,6 @@
 resource "aws_cloudwatch_event_rule" "daily_streak_reset" {
   name                = "progresstracker-daily-streak-reset"
-  schedule_expression = var.daily_reset_schedule
+  schedule_expression = var.streak_reset_schedule
 }
 
 resource "aws_cloudwatch_event_target" "daily_streak_reset" {

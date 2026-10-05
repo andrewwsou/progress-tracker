@@ -6,6 +6,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Map;
 
@@ -21,21 +23,25 @@ public class AutomationController {
 
     private final StreakResetService streakResetService;
     private final WeeklySummaryService weeklySummaryService;
+    private final Clock clock;
 
     @Value("${automation.internal-token:}")
     private String internalToken;
 
     public AutomationController(StreakResetService streakResetService,
-                                 WeeklySummaryService weeklySummaryService) {
+                                 WeeklySummaryService weeklySummaryService,
+                                 Clock clock) {
         this.streakResetService = streakResetService;
         this.weeklySummaryService = weeklySummaryService;
+        this.clock = clock;
     }
 
     @PostMapping("/reset-streaks")
     public Map<String, Object> resetStreaks(@RequestHeader(value = "X-Internal-Token", required = false) String token) {
         requireValidToken(token);
-        int resetCount = streakResetService.resetBrokenStreaks(LocalDate.now());
-        return Map.of("resetCount", resetCount, "ranAt", LocalDate.now().toString());
+        Instant now = clock.instant();
+        int resetCount = streakResetService.resetBrokenStreaks(now);
+        return Map.of("resetCount", resetCount, "ranAt", now.toString());
     }
 
     /**
@@ -47,7 +53,8 @@ public class AutomationController {
             @RequestHeader(value = "X-Internal-Token", required = false) String token,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate weekStart) {
         requireValidToken(token);
-        LocalDate week = WeeklySummaryService.startOfWeek(weekStart != null ? weekStart : LocalDate.now().minusWeeks(1));
+        // Last week by the UTC calendar. Run on Monday afternoon UTC, that is last week in every zone.
+        LocalDate week = WeeklySummaryService.startOfWeek(weekStart != null ? weekStart : LocalDate.now(clock).minusWeeks(1));
         int requested = weeklySummaryService.requestSummaries(week);
         return Map.of("requestedCount", requested, "weekStart", week.toString());
     }

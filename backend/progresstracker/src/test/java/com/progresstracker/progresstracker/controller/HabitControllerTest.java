@@ -1,5 +1,7 @@
 package com.progresstracker.progresstracker.controller;
 
+import com.progresstracker.progresstracker.service.UserCalendar;
+import java.time.Clock;
 import com.progresstracker.progresstracker.dto.HabitResponse;
 import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.model.User;
@@ -53,7 +55,8 @@ class HabitControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new HabitController(habitRepository, userRepository, habitProgressService, habitEntryRepository);
+        controller = new HabitController(habitRepository, userRepository, habitProgressService, habitEntryRepository,
+                new UserCalendar(Clock.systemUTC()));
         ReflectionTestUtils.setField(controller, "queueEnabled", false);
     }
 

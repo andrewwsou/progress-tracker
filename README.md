@@ -23,7 +23,7 @@ delivered twice, out of order, or after the worker crashes.
   at once, all succeeded, with one completion and one reward recorded.
 - **Measured, then optimised.** A k6 harness checks the database after every run. It led to a
   window-function streak query and fewer achievement queries (77.6 ms to 6.0 ms per reward for a
-  365-day streak), a set-based nightly job (5.1 s to 0.2 s over 20,000 habits), and a concurrent
+  365-day streak), a set-based streak-reset job (5.1 s to 0.2 s over 20,000 habits), and a concurrent
   worker with backpressure (242 to 650 events/s).
 - **Operable.** Graceful shutdown, health checks, Prometheus metrics, dead-letter queue alarms
   defined in Terraform, and Flyway migrations that both services validate against at startup.
@@ -48,7 +48,7 @@ flowchart LR
     W -.->|"weekly summaries, opt-in"| LLM["Claude API"]
     DB -.->|"NOTIFY on commit"| API
     API -.->|"server-sent events"| UI
-    EB["EventBridge + Lambda"] -->|"nightly streak reset,<br/>weekly summary requests"| API
+    EB["EventBridge + Lambda"] -->|"hourly streak reset,<br/>weekly summary requests"| API
 ```
 
 The API never waits for the reward or for the queue: a completion and its event are written in
@@ -94,6 +94,7 @@ which is left blank in production so the AWS SDK resolves the real SQS endpoint.
 | POST | `/api/habits/{id}/complete` | Record a completion (sync or async, see below) |
 | GET | `/api/achievements` | Unlocked achievements for the current user |
 | GET | `/api/summaries/latest` | The caller's newest finished weekly summary (204 if none yet) |
+| GET/PUT | `/api/me` | The caller's account: email and time zone (the browser keeps the zone current) |
 | GET | `/api/events` | Live updates for the caller as server-sent events: `ready`, then `reward` and `summary` as the worker finishes them |
 | POST | `/api/internal/automations/reset-streaks` | Zero out streaks for habits nobody completed recently. Auth: `X-Internal-Token` header, not JWT — meant for the scheduled Lambda in `infra/lambda`, not end users. |
 | POST | `/api/internal/automations/weekly-summary` | Ask for last week's summary for every active user (optional `?weekStart=` for any other week). Same auth model. |
@@ -145,7 +146,7 @@ queue only promises at-least-once, unordered delivery.
   so two workers cannot overwrite each other's totals. The API and the worker write different
   columns of the same habit row, and each updates only the columns it changed, so an edit
   cannot erase a reward or the other way round. The worker writes the reward columns in one
-  `UPDATE` computed from the row as it is at that moment, so the nightly streak reset running
+  `UPDATE` computed from the row as it is at that moment, so the streak reset running
   mid-reward cannot leave a just-completed habit with a zero streak
   ([`StreakResetRaceIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakResetRaceIT.java)
   forces that interleaving; the earlier read-modify-write failed it). The synchronous path closes
@@ -159,6 +160,18 @@ queue only promises at-least-once, unordered delivery.
   can't help) from **transient processing failures** (left on the queue so SQS redelivers after
   the visibility timeout; safe because processing is idempotent). A message that fails 5 times
   moves to the **dead-letter queue**, and a CloudWatch alarm fires as soon as one is there.
+
+**Each user's own calendar.** A completion, a goal, and a streak all count in the user's own days:
+a habit done at 8 pm in Los Angeles belongs to that day, though it is already tomorrow in UTC.
+The browser sends its IANA time zone at sign-up and keeps it current (`PUT /api/me`); the API
+works out "today" from one injectable `Clock` and that zone
+([`UserCalendar`](backend/progresstracker/src/main/java/com/progresstracker/progresstracker/service/UserCalendar.java)).
+The streak reset stays one `UPDATE` and lets PostgreSQL compute every owner's local date
+(`now AT TIME ZONE u.time_zone`), so it now runs hourly and reaches each zone within an hour of its
+midnight. The column came in as the second Flyway migration; existing users kept UTC, which is
+what the server had used for them. A completion keeps the date it had in the zone where it was made. So after
+moving west, a habit can already be done "tomorrow" (it counts as done, and its streak never moves
+backwards); after moving east, a streak kept every day can lose one day.
 
 **Live updates.** When a reward (or a weekly summary) has committed, the worker runs
 `pg_notify('habit_events', ...)`, so a browser is never told about a reward that did not happen.
@@ -298,12 +311,13 @@ PostgreSQL and an SQS-compatible broker in Docker and run the actual services ag
 | [`CompletionPipelineIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/CompletionPipelineIT.java) | The worker grants XP, streaks, and achievements from a queued event; duplicate deliveries grant the reward once; malformed messages are deleted; a failure mid-processing rolls back and the redelivery succeeds; a message that always fails moves to the dead-letter queue after 5 attempts; a user whose reward is stuck on a lock does not hold up another user's (this fails with one thread); health and metrics report the worker. |
 | [`HabitEventNotifierIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/HabitEventNotifierIT.java) | A reward applied from the queue notifies the API once it has committed; a notification sent in a transaction that rolls back is never delivered. |
 | [`EventStreamIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/EventStreamIT.java) | A notification reaches the open event stream of the user it names and no one else's; the stream needs a login. |
-| [`StreakResetRaceIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakResetRaceIT.java) | The nightly streak reset committing in the middle of a reward cannot leave the just-completed habit with a zero streak. The test forces the interleaving with a second connection; the previous code failed it. |
+| [`StreakResetRaceIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakResetRaceIT.java) | The streak reset committing in the middle of a reward cannot leave the just-completed habit with a zero streak. The test forces the interleaving with a second connection; the previous code failed it. |
 | [`ConcurrentProcessingIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/ConcurrentProcessingIT.java) | Several workers at once: the same event handled twice rewards and emails once; two days of one habit handled together lose no XP; different habits of one new user unlock the first achievement once. All of these failed before the event-id table and the per-user lock. Also: an older day handled late still earns its streak without rewinding the current one, and a reward does not undo an edit made meanwhile. |
 | [`StreakQueryIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakQueryIT.java) | The single-query streak calculation gives the same answer as counting back one day (or week) at a time, on 120 random completion histories, including across a year boundary. |
 | [`AchievementUnlockIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/AchievementUnlockIT.java) | The XP achievement unlocks when a user's total across habits reaches 100, the streak achievement on the seventh day in a row, and each only once. |
-| [`StreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/StreakResetIT.java) | The nightly streak reset, a single UPDATE, zeroes exactly the streaks that have lapsed and changes nothing else. |
-| [`CompletionDuringStreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/CompletionDuringStreakResetIT.java) | In sync mode, the nightly reset committing in the middle of a completion cannot leave the habit with a zero streak. Forced with a second connection; the previous code failed it. |
+| [`StreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/StreakResetIT.java) | The streak reset, a single UPDATE, zeroes exactly the streaks that have lapsed and changes nothing else; the day and week boundaries fall in the right place (including ISO week 53); the same history lapses for an owner on Kiritimati (UTC+14) but not for one in Los Angeles. |
+| [`TimeZoneIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/TimeZoneIT.java) | With the clock fixed at 02:30 UTC, a completion counts for 4 October in Los Angeles and 5 October in UTC; moving the account to another zone moves its "today"; unknown zones are refused. |
+| [`CompletionDuringStreakResetIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/CompletionDuringStreakResetIT.java) | In sync mode, the streak reset committing in the middle of a completion cannot leave the habit with a zero streak. Forced with a second connection; the previous code failed it. |
 | [`WeeklySummaryIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/WeeklySummaryIT.java) | The weekly job needs the internal token, asks once per active user (a repeated run adds nothing), and users read only their own newest finished summary. |
 | [`WeeklySummaryJobIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/WeeklySummaryJobIT.java) | The worker against WireMock standing in for the Claude API: a summary is written and its cost recorded; timeouts and server errors are retried and then fall back to the template; refusals, invented habits, and invented numbers fall back too; the daily token budget stops calls; expired claims are taken over; a stale worker cannot overwrite a newer claim; two workers write each summary once. |
 
@@ -334,7 +348,7 @@ How to run it is in [`load/README.md`](load/README.md); recorded numbers are in
   by 43 to 55% and p99 by 73 to 95% across three runs.
 - **Optimisations it led to.** The worker's time to apply a reward went from 14.2 ms to 7.7 ms
   for a one-day streak and from 77.6 ms to 6.0 ms for a 365-day streak (one window-function query
-  for the streak, and about ten achievement queries cut to three). The nightly streak reset over
+  for the streak, and about ten achievement queries cut to three). The streak reset over
   20,000 habits went from 5.1 s to 0.2 s (one UPDATE instead of 20,000).
 - **Worker concurrency.** Clearing a backlog of 6,000 queued events, the worker went from
   242 events/s with one thread to 650 events/s with eight (median of three alternating runs,
@@ -413,9 +427,10 @@ the budget, a backlog, and claims (leases, renewal, fencing, two workers at once
 
 Two batch jobs that don't belong on the request path:
 
-- **Nightly streak reset** — a habit's `currentStreak` is normally only recalculated on its next
+- **Hourly streak reset** — a habit's `currentStreak` is normally only recalculated on its next
   completion, so a habit a user abandoned keeps showing a stale streak indefinitely. This job
-  zeroes it out once the gap is long enough (`StreakResetService`), in a single UPDATE.
+  zeroes it out once the gap is long enough on the owner's own calendar (`StreakResetService`),
+  in a single UPDATE; running hourly reaches every time zone within an hour of its midnight.
 - **Weekly summary** — asks for each active user's summary of the past week
   (`WeeklySummaryService`); the worker writes them (see "Weekly summaries" above).
 

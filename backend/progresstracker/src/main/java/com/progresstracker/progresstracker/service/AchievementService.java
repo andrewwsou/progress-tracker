@@ -30,17 +30,20 @@ public class AchievementService {
     private final UserAchievementRepository userAchievementRepository;
     private final HabitRepository habitRepository;
     private final HabitEntryRepository habitEntryRepository;
+    private final UserCalendar calendar;
 
     public AchievementService(
             AchievementRepository achievementRepository,
             UserAchievementRepository userAchievementRepository,
             HabitRepository habitRepository,
-            HabitEntryRepository habitEntryRepository
+            HabitEntryRepository habitEntryRepository,
+            UserCalendar calendar
     ) {
         this.achievementRepository = achievementRepository;
         this.userAchievementRepository = userAchievementRepository;
         this.habitRepository = habitRepository;
         this.habitEntryRepository = habitEntryRepository;
+        this.calendar = calendar;
     }
 
     @Transactional
@@ -91,7 +94,7 @@ public class AchievementService {
         if (!userAchievementRepository.existsByUserAndAchievement(user, first)) {
             long totalCompletions = 0;
             for (Habit h : habitRepository.findByUser(user)) {
-                LocalDate today = LocalDate.now();
+                LocalDate today = calendar.today(user); // the user's day: entries are dated in it
                 totalCompletions += habitEntryRepository.countByHabitAndCompletedDateBetween(
                         h, LocalDate.of(1970, 1, 1), today
                 );

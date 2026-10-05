@@ -32,6 +32,7 @@ public class HabitProgressService {
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
     private final EntityManager entityManager;
+    private final UserCalendar calendar;
 
     public HabitProgressService(
             HabitRepository habitRepository,
@@ -39,7 +40,8 @@ public class HabitProgressService {
             AchievementService achievementService,
             OutboxEventRepository outboxEventRepository,
             ObjectMapper objectMapper,
-            EntityManager entityManager
+            EntityManager entityManager,
+            UserCalendar calendar
     ) {
         this.habitRepository = habitRepository;
         this.habitEntryRepository = habitEntryRepository;
@@ -47,12 +49,13 @@ public class HabitProgressService {
         this.outboxEventRepository = outboxEventRepository;
         this.objectMapper = objectMapper;
         this.entityManager = entityManager;
+        this.calendar = calendar;
     }
 
     @Transactional
     public Habit completeToday(Habit habit) {
         habit = lockAndReload(habit);
-        LocalDate today = LocalDate.now();
+        LocalDate today = calendar.today(habit.getUser());
 
         if (alreadyCompletedForPeriod(habit, today)) {
             return habit;
@@ -106,7 +109,7 @@ public class HabitProgressService {
 
     @Transactional
     public Habit recordCompletionOnly(Habit habit) {
-        LocalDate today = LocalDate.now();
+        LocalDate today = calendar.today(habit.getUser());
 
         if (alreadyCompletedForPeriod(habit, today)) {
             return habit;
@@ -133,13 +136,17 @@ public class HabitProgressService {
         }
     }
 
+    /**
+     * Whether the habit is already done for the period containing {@code today}: today (daily) or
+     * this week (weekly). A completion dated after today counts too: after the user moves west,
+     * their last completion can be dated "tomorrow" in the new zone, and completing again would
+     * otherwise move the streak backwards.
+     */
     public boolean alreadyCompletedForPeriod(Habit habit, LocalDate today) {
-        if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
-            LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-            LocalDate end = start.plusDays(6);
-            return habitEntryRepository.countByHabitAndCompletedDateBetween(habit, start, end) > 0;
-        }
-        return habitEntryRepository.findByHabitAndCompletedDate(habit, today).isPresent();
+        LocalDate periodStart = habit.getFrequency() == Habit.Frequency.WEEKLY
+                ? today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                : today;
+        return habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(habit, periodStart);
     }
 
     private boolean isConsecutivePeriod(Habit habit, LocalDate lastCompleted, LocalDate today) {
