@@ -1,20 +1,25 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { Habit } from "../api";
 import { cadenceLabel, goalPeriodLabel } from "../format";
 import { CheckIcon } from "./Icons";
 
 type Props = {
   habit: Habit;
+  /** Element ids for the check-off and Edit buttons, so the dashboard can move focus to them. */
+  ids: { check: string; edit: string };
   busy: boolean;
   onComplete: () => void;
   onEdit: () => void;
   onDelete: () => void;
 };
 
-export function HabitRow({ habit, busy, onComplete, onEdit, onDelete }: Props) {
+export function HabitRow({ habit, ids, busy, onComplete, onEdit, onDelete }: Props) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
   const done = habit.completedForPeriod;
-  // aria-disabled rather than disabled, so keyboard focus stays on the button after checking off.
+  // aria-disabled rather than disabled, here and on the confirming Delete button, so keyboard focus
+  // stays on the button after checking off, or if a delete fails.
   const checkInactive = done || busy;
 
   const count = habit.progressCount;
@@ -22,9 +27,16 @@ export function HabitRow({ habit, busy, onComplete, onEdit, onDelete }: Props) {
   const percent = Math.min(100, Math.round((count / target) * 100));
   const goalMet = count >= target;
 
+  // The Keep button goes away with the question, so put focus back on the Delete button that asked it.
+  function keep() {
+    flushSync(() => setConfirmingDelete(false));
+    deleteButton.current?.focus();
+  }
+
   return (
     <li className={`habit${done ? " habit--done" : ""}`}>
       <button
+        id={ids.check}
         className="habit__check"
         type="button"
         onClick={() => !checkInactive && onComplete()}
@@ -79,19 +91,29 @@ export function HabitRow({ habit, busy, onComplete, onEdit, onDelete }: Props) {
         {confirmingDelete ? (
           <>
             <span className="habit__confirm">Delete this habit and its history?</span>
-            <button className="button button--small button--danger" type="button" onClick={onDelete} disabled={busy}>
+            <button
+              className="button button--small button--danger"
+              type="button"
+              onClick={() => !busy && onDelete()}
+              aria-disabled={busy}
+            >
               {busy ? "Deleting…" : "Delete"}
             </button>
-            <button className="button button--small" type="button" onClick={() => setConfirmingDelete(false)}>
+            <button className="button button--small" type="button" onClick={keep}>
               Keep
             </button>
           </>
         ) : (
           <>
-            <button className="button button--small button--quiet" type="button" onClick={onEdit}>
+            <button id={ids.edit} className="button button--small button--quiet" type="button" onClick={onEdit}>
               Edit
             </button>
-            <button className="button button--small button--quiet" type="button" onClick={() => setConfirmingDelete(true)}>
+            <button
+              ref={deleteButton}
+              className="button button--small button--quiet"
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+            >
               Delete
             </button>
           </>

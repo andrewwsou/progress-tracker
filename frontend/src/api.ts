@@ -20,7 +20,10 @@ function authHeaders(): HeadersInit {
   };
 }
 
-/** An error response from the API. The status lets callers react to specific cases, such as 401. */
+/**
+ * An error response from the API. The status lets callers react to specific cases, such as 401;
+ * it is 0 when the server could not be reached at all.
+ */
 export class ApiError extends Error {
   readonly status: number;
 
@@ -28,6 +31,21 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
     this.status = status;
+  }
+}
+
+const UNREACHABLE = "Can't reach the server. Check that the API is running, then try again.";
+
+/**
+ * fetch, except that a network failure (the API is down, the connection dropped, a CORS refusal)
+ * becomes an ApiError a person can read instead of the browser's "Failed to fetch". Aborts pass through.
+ */
+async function request(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if (init?.signal?.aborted) throw err;
+    throw new ApiError(0, UNREACHABLE);
   }
 }
 
@@ -57,7 +75,7 @@ export function browserTimeZone(): string | undefined {
 }
 
 export async function registerUser(email: string, password: string): Promise<string> {
-  const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
+  const res = await request(`${BACKEND_URL}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, timeZone: browserTimeZone() }),
@@ -69,7 +87,7 @@ export async function registerUser(email: string, password: string): Promise<str
 }
 
 export async function loginUser(email: string, password: string): Promise<string> {
-  const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
+  const res = await request(`${BACKEND_URL}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -80,8 +98,17 @@ export async function loginUser(email: string, password: string): Promise<string
   return data.token;
 }
 
+/** Revokes the user's tokens on the server, on every device, so a copy of this one stops working. */
+export async function logout(token: string): Promise<void> {
+  const res = await request(`${BACKEND_URL}/api/auth/logout`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw await toError(res, "Failed to sign out");
+}
+
 export async function fetchHabits(): Promise<Habit[]> {
-  const res = await fetch(`${BACKEND_URL}/api/habits`, {
+  const res = await request(`${BACKEND_URL}/api/habits`, {
     headers: {
       ...authHeaders(),
     },
@@ -91,7 +118,7 @@ export async function fetchHabits(): Promise<Habit[]> {
 }
 
 export async function createHabit(payload: HabitInput): Promise<Habit> {
-  const res = await fetch(`${BACKEND_URL}/api/habits`, {
+  const res = await request(`${BACKEND_URL}/api/habits`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -104,7 +131,7 @@ export async function createHabit(payload: HabitInput): Promise<Habit> {
 }
 
 export async function updateHabit(id: number, payload: HabitInput): Promise<Habit> {
-  const res = await fetch(`${BACKEND_URL}/api/habits/${id}`, {
+  const res = await request(`${BACKEND_URL}/api/habits/${id}`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -117,7 +144,7 @@ export async function updateHabit(id: number, payload: HabitInput): Promise<Habi
 }
 
 export async function fetchAchievements(): Promise<Achievement[]> {
-  const res = await fetch(`${BACKEND_URL}/api/achievements`, {
+  const res = await request(`${BACKEND_URL}/api/achievements`, {
     headers: {
       ...authHeaders(),
     },
@@ -128,7 +155,7 @@ export async function fetchAchievements(): Promise<Achievement[]> {
 
 /** The newest finished weekly summary, or null if none has been written yet (204). */
 export async function fetchLatestSummary(): Promise<WeeklySummary | null> {
-  const res = await fetch(`${BACKEND_URL}/api/summaries/latest`, {
+  const res = await request(`${BACKEND_URL}/api/summaries/latest`, {
     headers: {
       ...authHeaders(),
     },
@@ -139,7 +166,7 @@ export async function fetchLatestSummary(): Promise<WeeklySummary | null> {
 }
 
 export async function deleteHabit(id: number): Promise<void> {
-  const res = await fetch(`${BACKEND_URL}/api/habits/${id}`, {
+  const res = await request(`${BACKEND_URL}/api/habits/${id}`, {
     method: "DELETE",
     headers: {
       ...authHeaders(),
@@ -149,7 +176,7 @@ export async function deleteHabit(id: number): Promise<void> {
 }
 
 export async function completeHabit(habitId: number): Promise<Habit> {
-  const res = await fetch(`${BACKEND_URL}/api/habits/${habitId}/complete`, {
+  const res = await request(`${BACKEND_URL}/api/habits/${habitId}/complete`, {
     method: "POST",
     headers: {
       ...authHeaders(),
@@ -160,13 +187,13 @@ export async function completeHabit(habitId: number): Promise<Habit> {
 }
 
 export async function fetchProfile(): Promise<Profile> {
-  const res = await fetch(`${BACKEND_URL}/api/me`, { headers: { ...authHeaders() } });
+  const res = await request(`${BACKEND_URL}/api/me`, { headers: { ...authHeaders() } });
   if (!res.ok) throw await toError(res, "Failed to load your profile");
   return res.json();
 }
 
 export async function updateProfile(timeZone: string): Promise<Profile> {
-  const res = await fetch(`${BACKEND_URL}/api/me`, {
+  const res = await request(`${BACKEND_URL}/api/me`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ timeZone }),
@@ -188,8 +215,11 @@ export async function syncTimeZone(): Promise<boolean> {
   return true;
 }
 
-/** A live update from the API: something changed, so read the new state. */
-export type LiveEvent = { type: "ready" | "reward" | "summary" | "resync" | string };
+/**
+ * A live update from the API: something changed, so read the new state. "evicted" is the
+ * exception: the server closed this stream because the user opened too many.
+ */
+export type LiveEvent = { type: "ready" | "reward" | "summary" | "resync" | "evicted" | string };
 
 // The server sends a keep-alive every 25 s; this long without any bytes means the connection is dead.
 const STREAM_SILENCE_LIMIT_MS = 60_000;
@@ -200,7 +230,7 @@ const STREAM_SILENCE_LIMIT_MS = 60_000;
  * EventSource cannot send the Authorization header.
  */
 export async function streamEvents(onEvent: (event: LiveEvent) => void, signal: AbortSignal): Promise<void> {
-  const res = await fetch(`${BACKEND_URL}/api/events`, {
+  const res = await request(`${BACKEND_URL}/api/events`, {
     headers: { Accept: "text/event-stream", ...authHeaders() },
     signal,
   });
@@ -233,13 +263,52 @@ export async function streamEvents(onEvent: (event: LiveEvent) => void, signal: 
   }
 }
 
+const MAX_RECONNECT_DELAY_MS = 30_000;
+
+/** Why followEvents stopped. */
+export type StreamEnd = "aborted" | "unauthorized" | "evicted";
+
+/**
+ * Keeps the live-update stream open until the signal aborts, reconnecting with backoff whenever it
+ * drops (onDrop is called each time). Gives up when the token is refused (401), and when the server
+ * closed the stream because the user has too many open: reconnecting would only close another of
+ * their streams, which would then reconnect in turn.
+ */
+export async function followEvents(
+  onEvent: (event: LiveEvent) => void,
+  onDrop: () => void,
+  signal: AbortSignal,
+): Promise<StreamEnd> {
+  let delay = 1000;
+  while (!signal.aborted) {
+    let evicted = false;
+    try {
+      await streamEvents((event) => {
+        if (event.type === "ready") delay = 1000;
+        if (event.type === "evicted") evicted = true;
+        onEvent(event);
+      }, signal);
+    } catch (err) {
+      if (signal.aborted) break;
+      if (err instanceof ApiError && err.status === 401) return "unauthorized";
+    }
+    onDrop();
+    if (evicted) return "evicted";
+    await new Promise((resolve) => window.setTimeout(resolve, delay));
+    delay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS);
+  }
+  return "aborted";
+}
+
 /** One read, or an error (after cancelling the stream) if nothing arrives within the limit. */
 async function readWithin(reader: ReadableStreamDefaultReader<string>, limitMs: number) {
   let timer: number | undefined;
   const silence = new Promise<never>((_, reject) => {
     timer = window.setTimeout(() => {
-      void reader.cancel();
+      // Reject first: cancelling settles the pending read (as the end of the stream), and
+      // whichever settles first wins the race.
       reject(new Error("The live-update stream went silent"));
+      void reader.cancel();
     }, limitMs);
   });
   try {

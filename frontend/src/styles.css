@@ -89,6 +89,12 @@ select {
   outline-offset: 2px;
 }
 
+/* Text that code moves focus to (tabindex="-1") so a screen reader reads it. It is not a control,
+   so it gets a thinner ring. */
+[tabindex="-1"]:focus-visible {
+  outline-width: 1px;
+}
+
 .muted {
   color: var(--text-muted);
 }
@@ -129,12 +135,15 @@ select {
   transition: background-color 120ms, border-color 120ms, color 120ms;
 }
 
-.button:hover:not(:disabled) {
+/* Busy buttons use aria-disabled to keep focus, so every hover rule below leaves them out too. */
+.button:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--surface-muted);
   border-color: var(--text-muted);
 }
 
-.button:disabled {
+.button:disabled,
+.button[aria-disabled="true"],
+.link[aria-disabled="true"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -145,7 +154,7 @@ select {
   color: var(--on-accent);
 }
 
-.button--primary:hover:not(:disabled) {
+.button--primary:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
@@ -156,7 +165,7 @@ select {
   color: var(--text-muted);
 }
 
-.button--quiet:hover:not(:disabled) {
+.button--quiet:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--surface-muted);
   border-color: var(--border);
   color: var(--text);
@@ -168,7 +177,7 @@ select {
   color: var(--on-danger);
 }
 
-.button--danger:hover:not(:disabled) {
+.button--danger:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--danger);
   border-color: var(--danger);
   filter: brightness(0.92);
@@ -242,6 +251,11 @@ select.input {
   background: var(--danger-soft);
   border-color: color-mix(in srgb, var(--danger) 30%, transparent);
   color: var(--danger);
+}
+
+.notice--info {
+  background: var(--surface-muted);
+  border-color: var(--border-strong);
 }
 
 /* ---- sign-in -------------------------------------------------------------------------- */
@@ -459,6 +473,8 @@ select.input {
   font-size: 1.5rem;
   font-weight: 650;
   letter-spacing: -0.015em;
+  /* Rounds the focus ring it gets after Try again. */
+  border-radius: var(--radius);
 }
 
 .habits__status {

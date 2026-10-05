@@ -36,6 +36,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign out everywhere
+         * @description Ends every session the caller has, on every device: every token issued to them before this call stops working. Sign in again for a new one.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/register": {
         parameters: {
             query?: never;
@@ -61,7 +81,7 @@ export interface paths {
         };
         /**
          * Live updates for the caller
-         * @description A server-sent event stream. The first event is `ready`; after that, `reward` when the worker has applied a completion's reward and `summary` when a weekly summary is written. Each event's data is a small JSON object; read the new state through the other endpoints.
+         * @description A server-sent event stream. Each event's data is a small JSON object; events only say that something changed, so read the new state through the other endpoints. The events: `ready` first, once the stream is live; `reward` when the worker has applied a completion's reward; `summary` when a weekly summary is written; `resync` when events may have been missed (the server's database listener reconnected), so re-read everything; `evicted` just before the server closes this stream because the user opened more streams than it keeps (it closes the oldest), so do not reconnect until the page is in use again.
          */
         get: operations["events"];
         put?: never;
@@ -345,6 +365,44 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetail"];
                 };
             };
+            /** @description Too many failed sign-ins for this email or from this address */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before trying again */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing or invalid bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
         };
     };
     register: {
@@ -480,6 +538,15 @@ export interface operations {
             };
             /** @description Missing or invalid bearer token */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetail"];
+                };
+            };
+            /** @description The caller already has the most habits allowed */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

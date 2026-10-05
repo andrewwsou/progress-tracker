@@ -28,7 +28,7 @@ export function HabitForm({ habit, onSave, onCancel }: Props) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (saving || !name.trim()) return;
     setSaving(true);
     const target =
       frequency === "WEEKLY"
@@ -104,7 +104,8 @@ export function HabitForm({ habit, onSave, onCancel }: Props) {
         <button className="button" type="button" onClick={onCancel}>
           Cancel
         </button>
-        <button className="button button--primary" type="submit" disabled={saving || !name.trim()}>
+        {/* aria-disabled while saving, so focus stays on the button if the save fails. */}
+        <button className="button button--primary" type="submit" disabled={!name.trim()} aria-disabled={saving}>
           {saving ? "Saving…" : habit ? "Save changes" : "Add habit"}
         </button>
       </div>

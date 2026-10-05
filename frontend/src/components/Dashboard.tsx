@@ -8,7 +8,7 @@ import {
   fetchAchievements,
   fetchHabits,
   fetchLatestSummary,
-  streamEvents,
+  followEvents,
   syncTimeZone,
   updateHabit,
 } from "../api";
@@ -37,92 +37,109 @@ async function fetchDashboard(): Promise<DashboardData> {
 // In async mode the worker applies a reward a moment after the request returns. The live stream
 // says when; without it (stream down), look again after this long instead.
 const REWARD_REFRESH_DELAY_MS = 1500;
-const MAX_RECONNECT_DELAY_MS = 30_000;
 // Events that mean "your data changed, read it again".
 const REFRESH_EVENTS = new Set(["ready", "reward", "summary", "resync"]);
 
-export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
-  const [habits, setHabits] = useState<Habit[]>([]);
-  const [achievements, setAchievements] = useState<Achievement[]>([]);
-  const [summary, setSummary] = useState<WeeklySummary | null>(null);
-  const [loading, setLoading] = useState(true);
+// Where keyboard focus goes back to after the habit form closes or a habit is deleted.
+const NEW_HABIT_ID = "new-habit";
+// Where it goes after Try again works and the button is gone. Always on screen, unlike New habit.
+const HABITS_TITLE_ID = "habits-title";
+const rowIds = (habit: Habit) => ({ check: `habit-${habit.id}-check`, edit: `habit-${habit.id}-edit` });
+
+type Props = {
+  /** The user chose to sign out. */
+  onSignOut: () => void;
+  /** The API refused the saved token (expired, revoked, or the account is gone). */
+  onSessionExpired: () => void;
+};
+
+export function Dashboard({ onSignOut, onSessionExpired }: Props) {
+  // Null until a load succeeds, so a failed load never looks like an empty account.
+  const [data, setData] = useState<DashboardData | null>(null);
+  // Why the newest load failed. The next load that succeeds clears it.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  // Why the last action (add, edit, complete, delete) failed.
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({ open: false });
   // Habits with a completion or delete request in flight.
   const [busyIds, setBusyIds] = useState<ReadonlySet<number>>(new Set());
+  // The element to focus once the next render is on screen. A new object each time, so asking for
+  // the same element twice still moves focus.
+  const [focusRequest, setFocusRequest] = useState<{ id: string } | null>(null);
+  const habits = data?.habits ?? [];
 
   const refreshTimer = useRef<number | undefined>(undefined);
   // Whether the live stream is connected; when it is, rewards arrive as events instead of by timer.
   const live = useRef(false);
-  // Only the newest refresh may update the screen; an older response arriving late is dropped.
+  // Once data is on screen, only the newest refresh may update it: an older response arriving late
+  // is dropped. An older failure is always dropped.
   const latestRefresh = useRef(0);
+  // Whether data is on screen. A quiet refresh that fails over it stays quiet.
+  const shown = useRef(false);
 
-  const showData = useCallback((data: DashboardData, refresh: number) => {
-    if (refresh !== latestRefresh.current) return;
-    setHabits(data.habits);
-    setAchievements(data.achievements);
-    setSummary(data.summary);
-    setLoading(false);
+  const showData = useCallback((next: DashboardData, refresh: number) => {
+    // Until something is shown, any success beats Loading or the error page, even an older one.
+    if (refresh !== latestRefresh.current && shown.current) return;
+    shown.current = true;
+    setData(next);
+    setLoadError(null);
   }, []);
 
   const showLoadError = useCallback(
-    (err: unknown) => {
-      // The saved token is no longer accepted (expired, or the account is gone).
+    (err: unknown, refresh: number, quiet = false) => {
+      // The saved token is no longer accepted (expired, revoked, or the account is gone).
       if (err instanceof ApiError && err.status === 401) {
-        onSignOut();
+        onSessionExpired();
         return;
       }
-      setError(errorText(err, "Could not load your habits."));
-      setLoading(false);
+      if (refresh !== latestRefresh.current) return;
+      if (quiet && shown.current) return;
+      setLoadError(errorText(err, "Could not load your habits."));
     },
-    [onSignOut],
+    [onSessionExpired],
   );
 
   const load = useCallback(() => {
     const refresh = ++latestRefresh.current;
-    return fetchDashboard().then((data) => showData(data, refresh), showLoadError);
+    return fetchDashboard().then(
+      (next) => showData(next, refresh),
+      (err) => showLoadError(err, refresh),
+    );
   }, [showData, showLoadError]);
 
-  /** A refresh nobody asked for: a failure is not worth a banner, but a rejected token still signs out. */
+  /**
+   * A refresh nobody asked for. A failure is not worth a banner over data already on screen, but
+   * it does show if nothing has loaded yet, and a rejected token still signs out.
+   */
   const refreshQuietly = useCallback(() => {
     const refresh = ++latestRefresh.current;
     return fetchDashboard().then(
-      (data) => showData(data, refresh),
-      (err) => {
-        if (err instanceof ApiError && err.status === 401) onSignOut();
-      },
+      (next) => showData(next, refresh),
+      (err) => showLoadError(err, refresh, true),
     );
-  }, [showData, onSignOut]);
+  }, [showData, showLoadError]);
 
-  // Live updates: refresh when the worker applies a reward or writes a summary. Reconnects with
-  // backoff, and refreshes on every (re)connect in case an event was missed while disconnected.
-  // A hidden tab lets its stream go (browsers allow only a few connections per server) and
-  // reconnects, catching up, when it is shown again.
+  // Live updates: refresh when the worker applies a reward or writes a summary, and on every
+  // (re)connect in case an event was missed while disconnected. A hidden tab lets its stream go
+  // (browsers allow only a few connections per server) and reconnects, catching up, when it is
+  // shown again. That is also when a stream the server closed for having too many open comes back.
   useEffect(() => {
     let controller: AbortController | null = null;
 
     async function connect(signal: AbortSignal) {
-      let delay = 1000;
-      while (!signal.aborted) {
-        try {
-          await streamEvents((event) => {
-            if (event.type === "ready") {
-              live.current = true;
-              delay = 1000;
-            }
-            if (REFRESH_EVENTS.has(event.type)) void refreshQuietly();
-          }, signal);
-        } catch (err) {
-          if (signal.aborted) return;
-          if (err instanceof ApiError && err.status === 401) {
-            onSignOut();
-            return;
-          }
-        }
-        live.current = false;
-        await new Promise((resolve) => window.setTimeout(resolve, delay));
-        delay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS);
-      }
+      const end = await followEvents(
+        (event) => {
+          if (event.type === "ready") live.current = true;
+          if (REFRESH_EVENTS.has(event.type)) void refreshQuietly();
+        },
+        () => {
+          live.current = false;
+        },
+        signal,
+      );
+      // After "evicted" the controller stays set, so start() does nothing until the tab is hidden.
+      if (end === "unauthorized") onSessionExpired();
     }
 
     function start() {
@@ -148,7 +165,7 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       pause();
     };
-  }, [refreshQuietly, onSignOut]);
+  }, [refreshQuietly, onSessionExpired]);
 
   // The account counts the user's days in its time zone; keep it matching this browser's. If it
   // changed, "today" may have moved, so read everything again. A failure here is not worth a banner.
@@ -168,8 +185,8 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
     let active = true;
     const refresh = ++latestRefresh.current;
     fetchDashboard().then(
-      (data) => active && showData(data, refresh),
-      (err) => active && showLoadError(err),
+      (next) => active && showData(next, refresh),
+      (err) => active && showLoadError(err, refresh),
     );
     return () => {
       active = false;
@@ -177,31 +194,58 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
     };
   }, [showData, showLoadError]);
 
-  /** Runs an action, then reloads; shows the action's error instead of throwing. */
-  async function run(action: () => Promise<unknown>, failure: string) {
+  // Focus moves once the render that asked for it is on screen, and only if it was lost (the
+  // focused button went away): it never jumps from somewhere the user has moved on to. If the
+  // target has gone too (the habit was deleted elsewhere), the New habit button is next best.
+  useEffect(() => {
+    if (!focusRequest || document.activeElement !== document.body) return;
+    (document.getElementById(focusRequest.id) ?? document.getElementById(NEW_HABIT_ID))?.focus();
+  }, [focusRequest]);
+
+  /** Runs an action, then reloads; shows the action's error instead of throwing. True if it succeeded. */
+  async function run(action: () => Promise<unknown>, failure: string): Promise<boolean> {
     setError(null);
     try {
       await action();
       await load();
+      return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        onSignOut();
-        return;
+        onSessionExpired();
+        return false;
       }
       setError(errorText(err, failure));
+      return false;
     }
   }
 
   /** Runs an action for one habit, ignoring repeat clicks while it is in flight. */
-  async function runForHabit(habit: Habit, action: () => Promise<unknown>, failure: string) {
-    if (busyIds.has(habit.id)) return;
+  async function runForHabit(habit: Habit, action: () => Promise<unknown>, failure: string): Promise<boolean> {
+    if (busyIds.has(habit.id)) return false;
     setBusyIds((ids) => new Set(ids).add(habit.id));
-    await run(action, failure);
+    const succeeded = await run(action, failure);
     setBusyIds((ids) => {
       const next = new Set(ids);
       next.delete(habit.id);
       return next;
     });
+    return succeeded;
+  }
+
+  async function retry() {
+    if (retrying) return;
+    setRetrying(true);
+    await load();
+    setRetrying(false);
+    // If it worked, the button has gone and focus with it. If not, focus is still on the button,
+    // and the focus effect leaves it there.
+    setFocusRequest({ id: HABITS_TITLE_ID });
+  }
+
+  /** Closes the form and puts focus back on the button that opened it. */
+  function closeForm(habit: Habit | null) {
+    setForm({ open: false });
+    setFocusRequest({ id: habit ? rowIds(habit).edit : NEW_HABIT_ID });
   }
 
   function handleComplete(habit: Habit) {
@@ -218,8 +262,13 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
     );
   }
 
-  function handleDelete(habit: Habit) {
-    void runForHabit(habit, () => deleteHabit(habit.id), `Could not delete “${habit.name}”.`);
+  async function handleDelete(habit: Habit) {
+    // Once the row has gone, focus moves to the next one (or the previous one, if it was the last).
+    const index = habits.findIndex((h) => h.id === habit.id);
+    const neighbour = habits[index + 1] ?? habits[index - 1];
+    if (await runForHabit(habit, () => deleteHabit(habit.id), `Could not delete “${habit.name}”.`)) {
+      setFocusRequest({ id: neighbour ? rowIds(neighbour).check : NEW_HABIT_ID });
+    }
   }
 
   async function handleSave(input: HabitInput) {
@@ -230,7 +279,7 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
       } else {
         await createHabit(input);
       }
-      setForm({ open: false });
+      closeForm(editing);
     }, editing ? "Could not save the habit." : "Could not add the habit.");
   }
 
@@ -241,6 +290,15 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
       <AppHeader onSignOut={onSignOut} />
 
       <main className="dashboard">
+        {data && loadError && (
+          <div className="notice notice--error dashboard__notice" role="alert">
+            <span>{loadError}</span>
+            <button className="link" type="button" onClick={retry} aria-disabled={retrying}>
+              {retrying ? "Trying again…" : "Try again"}
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className="notice notice--error dashboard__notice" role="alert">
             <span>{error}</span>
@@ -251,16 +309,21 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
         )}
 
         <div className="dashboard__grid">
-          <section className="habits" aria-labelledby="habits-title">
+          <section className="habits" aria-labelledby={HABITS_TITLE_ID}>
             <div className="habits__head">
               <div>
-                <h1 className="habits__title" id="habits-title">
+                <h1 className="habits__title" id={HABITS_TITLE_ID} tabIndex={-1}>
                   Habits
                 </h1>
                 <p className="muted">{longDate()}</p>
               </div>
               {!form.open && (
-                <button className="button button--primary" type="button" onClick={() => setForm({ open: true, habit: null })}>
+                <button
+                  id={NEW_HABIT_ID}
+                  className="button button--primary"
+                  type="button"
+                  onClick={() => setForm({ open: true, habit: null })}
+                >
                   <PlusIcon />
                   New habit
                 </button>
@@ -272,11 +335,19 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
                 key={form.habit?.id ?? "new"}
                 habit={form.habit}
                 onSave={handleSave}
-                onCancel={() => setForm({ open: false })}
+                onCancel={() => closeForm(form.habit)}
               />
             )}
 
-            {loading ? (
+            {!data && loadError ? (
+              <div className="empty" role="alert">
+                <p className="empty__title">Could not load your habits</p>
+                <p className="muted">{loadError}</p>
+                <button className="button button--primary" type="button" onClick={retry} aria-disabled={retrying}>
+                  {retrying ? "Trying again…" : "Try again"}
+                </button>
+              </div>
+            ) : !data ? (
               <p className="muted habits__status">Loading your habits…</p>
             ) : habits.length === 0 ? (
               !form.open && (
@@ -294,21 +365,25 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
                   <HabitRow
                     key={h.id}
                     habit={h}
+                    ids={rowIds(h)}
                     busy={busyIds.has(h.id)}
                     onComplete={() => handleComplete(h)}
                     onEdit={() => setForm({ open: true, habit: h })}
-                    onDelete={() => handleDelete(h)}
+                    onDelete={() => void handleDelete(h)}
                   />
                 ))}
               </ul>
             )}
           </section>
 
-          <aside className="sidebar" aria-label="Progress">
-            <StatsPanel habits={habits} doneCount={doneCount} />
-            {summary && <SummaryPanel summary={summary} />}
-            <AchievementsPanel achievements={achievements} />
-          </aside>
+          {/* Nothing until a load succeeds: 0/0 and 0 XP would say the account is empty. */}
+          {data && (
+            <aside className="sidebar" aria-label="Progress">
+              <StatsPanel habits={habits} doneCount={doneCount} />
+              {data.summary && <SummaryPanel summary={data.summary} />}
+              <AchievementsPanel achievements={data.achievements} />
+            </aside>
+          )}
         </div>
       </main>
     </div>
