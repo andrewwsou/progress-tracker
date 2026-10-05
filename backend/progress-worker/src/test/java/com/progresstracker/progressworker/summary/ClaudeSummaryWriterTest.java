@@ -3,8 +3,8 @@ package com.progresstracker.progressworker.summary;
 import com.anthropic.models.beta.messages.BetaFallbacksParam;
 import com.anthropic.models.beta.messages.BetaOutputConfig;
 import com.anthropic.models.beta.messages.MessageCreateParams;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -24,7 +24,7 @@ class ClaudeSummaryWriterTest {
                 new SummaryProperties.Llm(enabled, apiKey, model, "low", 2048, Duration.ofSeconds(30), 0,
                         "http://127.0.0.1:9", 100_000, refusalFallbacks, 10, 20, 8000),
                 new SummaryProperties.Job(5, Duration.ofMinutes(5), 3));
-        return new ClaudeSummaryWriter(properties, new ObjectMapper());
+        return new ClaudeSummaryWriter(properties, new JsonMapper());
     }
 
     @Test

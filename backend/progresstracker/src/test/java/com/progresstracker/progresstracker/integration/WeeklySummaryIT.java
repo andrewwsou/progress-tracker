@@ -1,12 +1,12 @@
 package com.progresstracker.progresstracker.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
+import tools.jackson.databind.JsonNode;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -46,7 +46,7 @@ class WeeklySummaryIT extends IntegrationTestBase {
         ResponseEntity<JsonNode> first = requestSummaries(AUTOMATION_TOKEN, MONDAY_2019.plusDays(2));
 
         assertThat(first.getStatusCode().value()).isEqualTo(200);
-        assertThat(first.getBody().get("weekStart").asText()).isEqualTo("2019-03-04");
+        assertThat(first.getBody().get("weekStart").asString()).isEqualTo("2019-03-04");
         assertThat(first.getBody().get("requestedCount").asInt()).isEqualTo(1);
         assertThat(summaryStatus(activeEmail)).isEqualTo("PENDING");
         assertThat(summaryCount(earlierEmail)).isZero();
@@ -84,7 +84,7 @@ class WeeklySummaryIT extends IntegrationTestBase {
         ResponseEntity<JsonNode> response = requestSummaries(AUTOMATION_TOKEN, null);
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
-        assertThat(response.getBody().get("weekStart").asText()).isEqualTo(lastMonday.toString());
+        assertThat(response.getBody().get("weekStart").asString()).isEqualTo(lastMonday.toString());
     }
 
     @Test
@@ -106,14 +106,14 @@ class WeeklySummaryIT extends IntegrationTestBase {
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         JsonNode summary = response.getBody();
-        assertThat(summary.get("headline").asText()).isEqualTo("The newest finished week");
-        assertThat(summary.get("weekStart").asText()).isEqualTo("2019-03-11");
-        assertThat(summary.get("weekEnd").asText()).isEqualTo("2019-03-17");
+        assertThat(summary.get("headline").asString()).isEqualTo("The newest finished week");
+        assertThat(summary.get("weekStart").asString()).isEqualTo("2019-03-11");
+        assertThat(summary.get("weekEnd").asString()).isEqualTo("2019-03-17");
         assertThat(summary.get("completions").asInt()).isEqualTo(4);
         assertThat(summary.get("xpEarned").asInt()).isEqualTo(46);
-        assertThat(summary.get("focusHabit").asText()).isEqualTo("Meditate");
-        assertThat(summary.get("source").asText()).isEqualTo("AI");
-        assertThat(summary.get("writtenAt").asText()).matches(".*(Z|[+-]\\d{2}:\\d{2})$");
+        assertThat(summary.get("focusHabit").asString()).isEqualTo("Meditate");
+        assertThat(summary.get("source").asString()).isEqualTo("AI");
+        assertThat(summary.get("writtenAt").asString()).matches(".*(Z|[+-]\\d{2}:\\d{2})$");
         assertThat(summary.has("user")).isFalse();
     }
 

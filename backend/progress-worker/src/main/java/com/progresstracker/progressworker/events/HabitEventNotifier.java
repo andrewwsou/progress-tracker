@@ -1,9 +1,9 @@
 package com.progresstracker.progressworker.events;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -25,11 +25,11 @@ public class HabitEventNotifier {
     static final String CHANNEL = "habit_events";
 
     private final JdbcTemplate jdbc;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
 
-    public HabitEventNotifier(JdbcTemplate jdbc, ObjectMapper objectMapper) {
+    public HabitEventNotifier(JdbcTemplate jdbc, JsonMapper jsonMapper) {
         this.jdbc = jdbc;
-        this.objectMapper = objectMapper;
+        this.jsonMapper = jsonMapper;
     }
 
     public void rewardApplied(long userId, long habitId) {
@@ -52,10 +52,10 @@ public class HabitEventNotifier {
 
     private void send(Map<String, Object> event) {
         try {
-            String payload = objectMapper.writeValueAsString(event);
+            String payload = jsonMapper.writeValueAsString(event);
             // pg_notify takes the channel as a parameter. Outside a transaction this commits at once.
             jdbc.query("select pg_notify(?, ?)", rs -> null, CHANNEL, payload);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Could not serialize event " + event, e);
         }
     }

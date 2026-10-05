@@ -1,13 +1,13 @@
 package com.progresstracker.progresstracker.integration;
 
-import com.fasterxml.jackson.core.util.DefaultIndenter;
-import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.context.TestPropertySource;
+import tools.jackson.core.util.DefaultIndenter;
+import tools.jackson.core.util.DefaultPrettyPrinter;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,8 +45,7 @@ class OpenApiContractIT extends IntegrationTestBase {
         JsonNode spec = rest.getForObject("/v3/api-docs", JsonNode.class);
 
         assertThat(spec.get("paths").has("/api/habits")).isTrue();
-        assertThat(spec.get("paths").fieldNames())
-                .toIterable()
+        assertThat(spec.get("paths").propertyNames())
                 .noneMatch(path -> path.startsWith("/api/internal"));
         assertThat(rest.getForEntity("/swagger-ui/index.html", String.class).getStatusCode().value()).isEqualTo(200);
     }
@@ -55,13 +54,13 @@ class OpenApiContractIT extends IntegrationTestBase {
     private static String render(JsonNode spec) throws Exception {
         ((ObjectNode) spec).remove("servers"); // host and port differ on every run
 
-        ObjectMapper mapper = new ObjectMapper().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+        JsonMapper mapper = JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
         DefaultIndenter indenter = new DefaultIndenter("  ", "\n");
         DefaultPrettyPrinter printer = new DefaultPrettyPrinter()
                 .withObjectIndenter(indenter)
                 .withArrayIndenter(indenter);
 
         Object asPlainMaps = mapper.treeToValue(spec, Object.class);
-        return mapper.writer(printer).writeValueAsString(asPlainMaps) + "\n";
+        return mapper.writer().with(printer).writeValueAsString(asPlainMaps) + "\n";
     }
 }

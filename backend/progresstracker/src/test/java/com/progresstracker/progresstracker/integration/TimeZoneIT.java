@@ -1,6 +1,5 @@
 package com.progresstracker.progresstracker.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -9,6 +8,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
+import tools.jackson.databind.JsonNode;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -50,7 +50,7 @@ class TimeZoneIT extends IntegrationTestBase {
         assertThat(completedDate(laHabit)).isEqualTo(LocalDate.of(2026, 10, 4));
         assertThat(completedDate(utcHabit)).isEqualTo(LocalDate.of(2026, 10, 5));
         assertThat(laCompletion.getBody().get("completedForPeriod").asBoolean()).isTrue();
-        assertThat(laCompletion.getBody().get("lastCompletedDate").asText()).isEqualTo("2026-10-04");
+        assertThat(laCompletion.getBody().get("lastCompletedDate").asString()).isEqualTo("2026-10-04");
     }
 
     @Test
@@ -62,7 +62,7 @@ class TimeZoneIT extends IntegrationTestBase {
         ResponseEntity<JsonNode> moved = send(HttpMethod.PUT, "/api/me", token, Map.of("timeZone", "Pacific/Kiritimati"));
 
         assertThat(moved.getStatusCode().value()).isEqualTo(200);
-        assertThat(send(HttpMethod.GET, "/api/me", token, null).getBody().get("timeZone").asText())
+        assertThat(send(HttpMethod.GET, "/api/me", token, null).getBody().get("timeZone").asString())
                 .isEqualTo("Pacific/Kiritimati");
         // On Kiritimati (UTC+14) it is already the afternoon of 5 October: not done for that day yet.
         JsonNode habits = send(HttpMethod.GET, "/api/habits", token, null).getBody();
@@ -73,7 +73,7 @@ class TimeZoneIT extends IntegrationTestBase {
     void anUnusableZoneNeverBlocksSignUpButIsRefusedAsAChange() {
         // Sign-up still works; the account just keeps UTC.
         String token = register("Mars/Olympus_Mons");
-        assertThat(send(HttpMethod.GET, "/api/me", token, null).getBody().get("timeZone").asText()).isEqualTo("UTC");
+        assertThat(send(HttpMethod.GET, "/api/me", token, null).getBody().get("timeZone").asString()).isEqualTo("UTC");
 
         // Changing it is strict: fixed offsets, abbreviations PostgreSQL reads as fixed offsets, and
         // ids PostgreSQL does not know at all are refused.
@@ -94,7 +94,7 @@ class TimeZoneIT extends IntegrationTestBase {
 
         // Done already: no second entry for the 4th, and the streak does not move backwards.
         assertThat(again.getBody().get("completedForPeriod").asBoolean()).isTrue();
-        assertThat(again.getBody().get("lastCompletedDate").asText()).isEqualTo("2026-10-05");
+        assertThat(again.getBody().get("lastCompletedDate").asString()).isEqualTo("2026-10-05");
         assertThat(jdbc.queryForObject("select count(*) from habit_entries where habit_id = ?", Integer.class, habit))
                 .isEqualTo(1);
     }
@@ -106,7 +106,7 @@ class TimeZoneIT extends IntegrationTestBase {
         }
         ResponseEntity<JsonNode> response = rest.postForEntity("/api/auth/register", body, JsonNode.class);
         assertThat(response.getStatusCode().value()).isEqualTo(200);
-        return response.getBody().get("token").asText();
+        return response.getBody().get("token").asString();
     }
 
     private LocalDate completedDate(long habitId) {

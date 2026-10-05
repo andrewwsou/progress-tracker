@@ -1,15 +1,15 @@
 package com.progresstracker.progresstracker.events;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.postgresql.PGConnection;
 import org.postgresql.PGNotification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.boot.jdbc.autoconfigure.DataSourceProperties;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -44,7 +44,7 @@ public class PostgresEventListener implements SmartLifecycle {
 
     private final DataSourceProperties dataSource;
     private final UserEventStreams streams;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
     private final boolean enabled;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread thread;
@@ -52,11 +52,11 @@ public class PostgresEventListener implements SmartLifecycle {
 
     public PostgresEventListener(DataSourceProperties dataSource,
                                  UserEventStreams streams,
-                                 ObjectMapper objectMapper,
+                                 JsonMapper jsonMapper,
                                  @Value("${events.listener.enabled:true}") boolean enabled) {
         this.dataSource = dataSource;
         this.streams = streams;
-        this.objectMapper = objectMapper;
+        this.jsonMapper = jsonMapper;
         this.enabled = enabled;
     }
 
@@ -126,9 +126,9 @@ public class PostgresEventListener implements SmartLifecycle {
     /** Payload: {"type": "reward" | "summary", "userId": 1, ...}. Anything else is ignored. */
     private void forward(String payload) {
         try {
-            JsonNode event = objectMapper.readTree(payload);
+            JsonNode event = jsonMapper.readTree(payload);
             if (event.hasNonNull("type") && event.hasNonNull("userId")) {
-                streams.publish(event.get("userId").asLong(), event.get("type").asText(), payload);
+                streams.publish(event.get("userId").asLong(), event.get("type").asString(), payload);
             }
         } catch (Exception e) {
             log.warn("Ignoring unreadable {} notification: {}", CHANNEL, payload, e);

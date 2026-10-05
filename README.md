@@ -58,8 +58,8 @@ at all, which is the default for local development.
 
 | Part | Path | Stack |
 |---|---|---|
-| API | `backend/progresstracker` | Spring Boot 3.5 (Java 17), Spring Security + JWT, JPA/Hibernate, PostgreSQL, Flyway |
-| Worker | `backend/progress-worker` | Spring Boot 3.5 (Java 17), AWS SQS, JPA/Hibernate, Actuator, Micrometer/Prometheus, Claude API |
+| API | `backend/progresstracker` | Spring Boot 4.1 (Java 17), Spring Security + JWT, JPA/Hibernate, PostgreSQL, Flyway |
+| Worker | `backend/progress-worker` | Spring Boot 4.1 (Java 17), AWS SQS, JPA/Hibernate, Actuator, Micrometer/Prometheus, Claude API |
 | Frontend | `frontend` | React 19, TypeScript, Vite; API types generated from the OpenAPI contract |
 | Infrastructure | `infra` | Terraform (SQS, dead-letter queue, alarms, EventBridge, Lambda), Python Lambda handlers |
 | Load tests | `load` | k6 in Docker Compose, with SQL checks after every scenario |

@@ -1,7 +1,5 @@
 package com.progresstracker.progressworker.worker;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.progresstracker.progressworker.events.HabitEventNotifier;
 import com.progresstracker.progressworker.service.CompletionProcessor;
 import io.micrometer.core.instrument.Counter;
@@ -22,6 +20,8 @@ import software.amazon.awssdk.services.sqs.SqsClientBuilder;
 import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -62,7 +62,7 @@ public class SqsPoller implements SmartLifecycle {
 
     private static final long MAX_POLL_BACKOFF_MS = 30_000;
 
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
     private final CompletionProcessor completionProcessor;
     private final HabitEventNotifier eventNotifier;
 
@@ -108,6 +108,9 @@ public class SqsPoller implements SmartLifecycle {
     private final AtomicInteger inFlight = new AtomicInteger();
     private volatile long lastPollAtMillis = System.currentTimeMillis();
     private SqsClient sqsClient;
+    // Built by start() unless a test passed one in. One we built is closed and rebuilt on a
+    // stop and start (a test context that is paused and resumed does exactly that).
+    private final boolean ownsClient;
     private Thread loopThread;
     private Semaphore idleWorkers;
     private ExecutorService workers;
@@ -122,18 +125,19 @@ public class SqsPoller implements SmartLifecycle {
     private final Timer lag;
 
     @Autowired
-    public SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor, HabitEventNotifier eventNotifier,
+    public SqsPoller(JsonMapper jsonMapper, CompletionProcessor completionProcessor, HabitEventNotifier eventNotifier,
                      MeterRegistry meterRegistry) {
-        this(objectMapper, completionProcessor, eventNotifier, meterRegistry, null);
+        this(jsonMapper, completionProcessor, eventNotifier, meterRegistry, null);
     }
 
     /** For tests: uses the given client instead of building one. */
-    SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor, HabitEventNotifier eventNotifier,
+    SqsPoller(JsonMapper jsonMapper, CompletionProcessor completionProcessor, HabitEventNotifier eventNotifier,
               MeterRegistry meterRegistry, SqsClient sqsClient) {
-        this.objectMapper = objectMapper;
+        this.jsonMapper = jsonMapper;
         this.completionProcessor = completionProcessor;
         this.eventNotifier = eventNotifier;
         this.sqsClient = sqsClient;
+        this.ownsClient = sqsClient == null;
 
         this.applied = events(meterRegistry, "applied");
         this.skipped = events(meterRegistry, "skipped");
@@ -305,7 +309,7 @@ public class SqsPoller implements SmartLifecycle {
 
         // Schema errors can never succeed on retry, so these are poison messages: delete them.
         try {
-            JsonNode node = objectMapper.readTree(message.body());
+            JsonNode node = jsonMapper.readTree(message.body());
 
             // Use path() so missing fields don't NPE
             JsonNode userIdNode = node.path("userId");
@@ -313,8 +317,8 @@ public class SqsPoller implements SmartLifecycle {
 
             // Accept either "date" or "completedDate"
             String dateStr = node.hasNonNull("date")
-                    ? node.get("date").asText()
-                    : node.path("completedDate").asText(null);
+                    ? node.get("date").asString()
+                    : node.path("completedDate").asString(null);
 
             if (userIdNode.isMissingNode() || habitIdNode.isMissingNode() || dateStr == null || dateStr.isBlank()) {
                 log.error("Invalid message schema (deleting message): {}", message.body());
@@ -387,10 +391,10 @@ public class SqsPoller implements SmartLifecycle {
     private static UUID parseEventId(JsonNode node, long habitId, LocalDate date) {
         if (node.hasNonNull("eventId")) {
             try {
-                return UUID.fromString(node.get("eventId").asText());
+                return UUID.fromString(node.get("eventId").asString(""));
             } catch (IllegalArgumentException e) {
                 log.warn("Unreadable eventId '{}'; deriving one from habit {} and date {}",
-                        node.get("eventId").asText(), habitId, date);
+                        node.get("eventId").asString(""), habitId, date);
             }
         }
         return UUID.nameUUIDFromBytes(("completion:" + habitId + ":" + date).getBytes(StandardCharsets.UTF_8));
@@ -402,9 +406,9 @@ public class SqsPoller implements SmartLifecycle {
             return null;
         }
         try {
-            return OffsetDateTime.parse(node.get("occurredAt").asText());
+            return OffsetDateTime.parse(node.get("occurredAt").asString(""));
         } catch (DateTimeParseException e) {
-            log.warn("Unreadable occurredAt '{}'; recording the event without it", node.get("occurredAt").asText());
+            log.warn("Unreadable occurredAt '{}'; recording the event without it", node.get("occurredAt").asString(""));
             return null;
         }
     }
@@ -449,6 +453,9 @@ public class SqsPoller implements SmartLifecycle {
             Thread.currentThread().interrupt();
         } finally {
             sqsClient.close();
+            if (ownsClient) {
+                sqsClient = null;
+            }
             log.info("SQS poller stopped");
         }
     }

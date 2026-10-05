@@ -1,9 +1,9 @@
 package com.progresstracker.progresstracker.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -12,8 +12,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
+import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,10 +37,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * (the Testcontainers "singleton container" pattern); it is removed when the JVM exits.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AutoConfigureTestRestTemplate
 abstract class IntegrationTestBase {
 
-    private static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"));
+    private static final PostgreSQLContainer POSTGRES =
+            new PostgreSQLContainer(DockerImageName.parse("postgres:16-alpine"));
 
     static {
         POSTGRES.start();
@@ -55,7 +57,7 @@ abstract class IntegrationTestBase {
         // The JDK client sends concurrent requests concurrently. Apache HttpClient, which Spring
         // would otherwise pick because the AWS SDK brings it in, allows 5 connections per host by
         // default and would quietly turn the "50 at once" tests into 5 at a time.
-        registry.add("spring.http.client.factory", () -> "jdk");
+        registry.add("spring.http.clients.imperative.factory", () -> "jdk");
     }
 
     /** Unlocks the scheduled-job endpoints (/api/internal/automations/*) in tests. */
@@ -79,7 +81,7 @@ abstract class IntegrationTestBase {
                 JsonNode.class);
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
-        return response.getBody().get("token").asText();
+        return response.getBody().get("token").asString();
     }
 
     /** Creates a daily habit through the API and returns its id. */

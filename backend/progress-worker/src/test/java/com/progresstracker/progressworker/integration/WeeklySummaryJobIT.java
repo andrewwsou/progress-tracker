@@ -1,6 +1,5 @@
 package com.progresstracker.progressworker.integration;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.client.MappingBuilder;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
@@ -12,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -52,7 +52,7 @@ class WeeklySummaryJobIT extends WorkerIntegrationTestBase {
 
     private static final LocalDate WEEK = LocalDate.of(2026, 9, 21); // a Monday
     private static final String MESSAGES = "/v1/messages";
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final JsonMapper JSON = new JsonMapper();
 
     @DynamicPropertySource
     static void summaryProperties(DynamicPropertyRegistry registry) {

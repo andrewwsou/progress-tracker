@@ -1,13 +1,13 @@
 package com.progresstracker.progresstracker.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import software.amazon.awssdk.services.sqs.model.Message;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -44,7 +44,7 @@ class CompletionOutboxIT extends IntegrationTestBase {
     }
 
     @Autowired
-    private ObjectMapper objectMapper;
+    private JsonMapper jsonMapper;
 
     /** Every message read from the queue so far, by habit id. */
     private final Map<Long, List<JsonNode>> received = new HashMap<>();
@@ -69,10 +69,10 @@ class CompletionOutboxIT extends IntegrationTestBase {
 
         // ...and the relay delivers it to the queue and marks it published.
         JsonNode message = awaitMessagesFor(habitId, 1).get(0);
-        assertThat(message.get("eventId").asText()).isEqualTo(eventIds.get(0).toString());
+        assertThat(message.get("eventId").asString()).isEqualTo(eventIds.get(0).toString());
         assertThat(message.get("userId").asLong()).isEqualTo(userIdFor(email));
-        assertThat(message.get("date").asText()).isEqualTo(entry.get("completed_date").toString());
-        assertThat(OffsetDateTime.parse(message.get("occurredAt").asText())).isNotNull();
+        assertThat(message.get("date").asString()).isEqualTo(entry.get("completed_date").toString());
+        assertThat(OffsetDateTime.parse(message.get("occurredAt").asString())).isNotNull();
         await().atMost(TIMEOUT).until(() -> isPublished(eventIds.get(0)));
     }
 
@@ -125,7 +125,7 @@ class CompletionOutboxIT extends IntegrationTestBase {
         // Nothing was lost: the next relay run delivers it.
         UUID eventId = outboxEventIdsFor(habitId).get(0);
         await().atMost(TIMEOUT).until(() -> isPublished(eventId));
-        assertThat(awaitMessagesFor(habitId, 1).get(0).get("eventId").asText()).isEqualTo(eventId.toString());
+        assertThat(awaitMessagesFor(habitId, 1).get(0).get("eventId").asString()).isEqualTo(eventId.toString());
     }
 
     @Test
@@ -173,7 +173,7 @@ class CompletionOutboxIT extends IntegrationTestBase {
         List<Message> batch;
         while (!(batch = LocalSqs.receive(QUEUE_URL)).isEmpty()) {
             for (Message message : batch) {
-                JsonNode body = objectMapper.readTree(message.body());
+                JsonNode body = jsonMapper.readTree(message.body());
                 LocalSqs.delete(QUEUE_URL, message);
                 received.computeIfAbsent(body.path("habitId").asLong(), id -> new ArrayList<>()).add(body);
             }

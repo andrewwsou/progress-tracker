@@ -16,12 +16,12 @@ import com.anthropic.models.beta.messages.MessageCreateParams;
 import com.anthropic.models.beta.messages.StructuredMessage;
 import com.anthropic.models.beta.messages.StructuredMessageCreateParams;
 import com.anthropic.models.beta.messages.StructuredTextBlock;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -70,12 +70,12 @@ public class ClaudeSummaryWriter implements AiSummaryWriter {
     private static final Logger log = LoggerFactory.getLogger(ClaudeSummaryWriter.class);
 
     private final SummaryProperties.Llm config;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
     private final AnthropicClient client;
 
-    public ClaudeSummaryWriter(SummaryProperties properties, ObjectMapper objectMapper) {
+    public ClaudeSummaryWriter(SummaryProperties properties, JsonMapper jsonMapper) {
         this.config = properties.llm();
-        this.objectMapper = objectMapper;
+        this.jsonMapper = jsonMapper;
 
         if (!config.enabled()) {
             this.client = null;
@@ -205,9 +205,9 @@ public class ClaudeSummaryWriter implements AiSummaryWriter {
 
         try {
             return "Here is the user's week. Write their summary.\n\n<week>\n"
-                    + objectMapper.writeValueAsString(week)
+                    + jsonMapper.writeValueAsString(week)
                     + "\n</week>";
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Could not serialize the week", e);
         }
     }

@@ -1,6 +1,5 @@
 package com.progresstracker.progressworker.worker;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.progresstracker.progressworker.events.HabitEventNotifier;
 import com.progresstracker.progressworker.service.CompletionProcessor;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -15,6 +14,7 @@ import software.amazon.awssdk.services.sqs.model.DeleteMessageRequest;
 import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageRequest;
 import software.amazon.awssdk.services.sqs.model.ReceiveMessageResponse;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -82,7 +82,7 @@ class SqsPollerTest {
     }
 
     private void startPoller(int concurrency, int shutdownTimeoutSeconds) {
-        poller = new SqsPoller(new ObjectMapper(), processor, notifier, metrics, sqs);
+        poller = new SqsPoller(new JsonMapper(), processor, notifier, metrics, sqs);
         ReflectionTestUtils.setField(poller, "workerEnabled", true);
         ReflectionTestUtils.setField(poller, "queueEnabled", true);
         ReflectionTestUtils.setField(poller, "sqsUrl", "http://sqs.test/000000000000/completions");

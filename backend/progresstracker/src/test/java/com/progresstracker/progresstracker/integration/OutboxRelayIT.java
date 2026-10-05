@@ -1,6 +1,5 @@
 package com.progresstracker.progresstracker.integration;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.progresstracker.progresstracker.outbox.OutboxRelay;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -8,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import software.amazon.awssdk.services.sqs.model.Message;
+import tools.jackson.databind.json.JsonMapper;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -48,7 +48,7 @@ class OutboxRelayIT extends IntegrationTestBase {
     private DataSource dataSource;
 
     @Autowired
-    private ObjectMapper objectMapper;
+    private JsonMapper jsonMapper;
 
     @BeforeEach
     void startWithNothingWaiting() {
@@ -180,7 +180,7 @@ class OutboxRelayIT extends IntegrationTestBase {
         List<Message> batch;
         while (!(batch = LocalSqs.receive(QUEUE_URL)).isEmpty()) {
             for (Message message : batch) {
-                deliveries.merge(objectMapper.readTree(message.body()).path("eventId").asText(), 1, Integer::sum);
+                deliveries.merge(jsonMapper.readTree(message.body()).path("eventId").asString(), 1, Integer::sum);
                 LocalSqs.delete(QUEUE_URL, message);
             }
         }

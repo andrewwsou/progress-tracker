@@ -1,11 +1,11 @@
 package com.progresstracker.progresstracker.integration;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
+import tools.jackson.databind.JsonNode;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -70,9 +70,9 @@ class RequestValidationIT extends IntegrationTestBase {
         assertThat(response.getStatusCode().value()).isEqualTo(201);
         JsonNode habit = response.getBody();
         assertThat(habit.get("goalTargetCount").asInt()).isEqualTo(1);
-        assertThat(habit.get("goalPeriod").asText()).isEqualTo("WEEKLY");
+        assertThat(habit.get("goalPeriod").asString()).isEqualTo("WEEKLY");
         assertThat(habit.get("xpTotal").asInt()).isZero();
-        assertThat(habit.get("createdAt").asText()).matches(".*(Z|[+-]\\d{2}:\\d{2})$"); // carries a UTC offset
+        assertThat(habit.get("createdAt").asString()).matches(".*(Z|[+-]\\d{2}:\\d{2})$"); // carries a UTC offset
         assertThat(habit.has("lastCompletedDate")).isFalse(); // no value yet: omitted, not null
         assertThat(habit.has("user")).isFalse();
     }
@@ -124,7 +124,7 @@ class RequestValidationIT extends IntegrationTestBase {
         ResponseEntity<JsonNode> second = register(email, "another-long-password");
 
         assertProblem(second, 409);
-        assertThat(second.getBody().get("detail").asText()).isEqualTo("Email already used");
+        assertThat(second.getBody().get("detail").asString()).isEqualTo("Email already used");
     }
 
     @Test
@@ -136,7 +136,7 @@ class RequestValidationIT extends IntegrationTestBase {
                 Map.of("email", email, "password", "definitely-the-wrong-password"));
 
         assertProblem(response, 401);
-        assertThat(response.getBody().get("detail").asText()).isEqualTo("Invalid credentials");
+        assertThat(response.getBody().get("detail").asString()).isEqualTo("Invalid credentials");
     }
 
     @Test

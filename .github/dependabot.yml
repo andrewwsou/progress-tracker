@@ -1,5 +1,5 @@
 # Weekly dependency update pull requests. Minor and patch updates are grouped into one PR per
-# ecosystem so they arrive together; CI checks each one. Major versions (Spring Boot 4, React 20,
+# ecosystem so they arrive together; CI checks each one. Major versions (Spring Boot 5, React 20,
 # a new AWS provider, ...) are left out on purpose: those are planned upgrades, not chores.
 #
 # Docker base images are not listed: the Dockerfiles use floating tags on the Java 17 line

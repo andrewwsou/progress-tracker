@@ -1,6 +1,5 @@
 package com.progresstracker.progressworker.worker;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.progresstracker.progressworker.events.HabitEventNotifier;
 import com.progresstracker.progressworker.service.CompletionProcessor;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -8,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.json.JsonMapper;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -17,7 +17,7 @@ import static org.mockito.Mockito.mock;
 class SqsPollerConfigTest {
 
     private static SqsPoller poller(boolean queueEnabled, String sqsUrl, String endpointOverride) {
-        SqsPoller poller = new SqsPoller(new ObjectMapper(), mock(CompletionProcessor.class), mock(HabitEventNotifier.class), new SimpleMeterRegistry());
+        SqsPoller poller = new SqsPoller(new JsonMapper(), mock(CompletionProcessor.class), mock(HabitEventNotifier.class), new SimpleMeterRegistry());
         ReflectionTestUtils.setField(poller, "workerEnabled", true);
         ReflectionTestUtils.setField(poller, "queueEnabled", queueEnabled);
         ReflectionTestUtils.setField(poller, "sqsUrl", sqsUrl);

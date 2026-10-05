@@ -1,7 +1,5 @@
 package com.progresstracker.progresstracker.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.model.HabitEntry;
 import com.progresstracker.progresstracker.model.User;
@@ -15,6 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -30,7 +30,7 @@ public class HabitProgressService {
     private final HabitEntryRepository habitEntryRepository;
     private final AchievementService achievementService;
     private final OutboxEventRepository outboxEventRepository;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
     private final EntityManager entityManager;
     private final UserCalendar calendar;
 
@@ -39,7 +39,7 @@ public class HabitProgressService {
             HabitEntryRepository habitEntryRepository,
             AchievementService achievementService,
             OutboxEventRepository outboxEventRepository,
-            ObjectMapper objectMapper,
+            JsonMapper jsonMapper,
             EntityManager entityManager,
             UserCalendar calendar
     ) {
@@ -47,7 +47,7 @@ public class HabitProgressService {
         this.habitEntryRepository = habitEntryRepository;
         this.achievementService = achievementService;
         this.outboxEventRepository = outboxEventRepository;
-        this.objectMapper = objectMapper;
+        this.jsonMapper = jsonMapper;
         this.entityManager = entityManager;
         this.calendar = calendar;
     }
@@ -129,9 +129,9 @@ public class HabitProgressService {
         CompletionEvent event = new CompletionEvent(
                 UUID.randomUUID(), habit.getUser().getId(), habit.getId(), date, now);
         try {
-            String payload = objectMapper.writeValueAsString(event.toMessage());
+            String payload = jsonMapper.writeValueAsString(event.toMessage());
             return new OutboxEvent(event.eventId(), CompletionEvent.TYPE, payload, now);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Failed to serialize completion event", e);
         }
     }

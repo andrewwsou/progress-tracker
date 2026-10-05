@@ -2,24 +2,24 @@ package com.progresstracker.progresstracker.service;
 
 import java.time.Clock;
 import java.time.ZoneOffset;
-import jakarta.persistence.EntityManager;
-import org.mockito.InOrder;
-import org.springframework.web.server.ResponseStatusException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.progresstracker.progresstracker.outbox.OutboxEvent;
-import com.progresstracker.progresstracker.outbox.OutboxEventRepository;
-import org.mockito.ArgumentCaptor;
 import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.model.HabitEntry;
 import com.progresstracker.progresstracker.model.User;
+import com.progresstracker.progresstracker.outbox.OutboxEvent;
+import com.progresstracker.progresstracker.outbox.OutboxEventRepository;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
 import java.util.Optional;
@@ -55,7 +55,7 @@ class HabitProgressServiceTest {
     @BeforeEach
     void setUp() {
         service = new HabitProgressService(
-                habitRepository, habitEntryRepository, achievementService, outboxEventRepository, new ObjectMapper(),
+                habitRepository, habitEntryRepository, achievementService, outboxEventRepository, new JsonMapper(),
                 entityManager, new UserCalendar(Clock.fixed(TODAY.atTime(12, 0).toInstant(ZoneOffset.UTC), ZoneOffset.UTC)));
         lenient().when(habitRepository.save(any(Habit.class))).thenAnswer(inv -> inv.getArgument(0));
         // The habit exists and is managed: completeToday locks its row and refreshes it in place.
@@ -216,15 +216,15 @@ class HabitProgressServiceTest {
         ArgumentCaptor<OutboxEvent> saved = ArgumentCaptor.forClass(OutboxEvent.class);
         verify(outboxEventRepository).save(saved.capture());
         OutboxEvent event = saved.getValue();
-        JsonNode message = new ObjectMapper().readTree(event.getPayload());
+        JsonNode message = new JsonMapper().readTree(event.getPayload());
 
         assertThat(event.getType()).isEqualTo("habit.completed");
         assertThat(event.getPublishedAt()).isNull();
         // The row id doubles as the event id the worker dedupes on.
-        assertThat(message.get("eventId").asText()).isEqualTo(event.getId().toString());
+        assertThat(message.get("eventId").asString()).isEqualTo(event.getId().toString());
         assertThat(message.get("userId").asLong()).isEqualTo(7L);
         assertThat(message.get("habitId").asLong()).isEqualTo(42L);
-        assertThat(message.get("date").asText()).isEqualTo(TODAY.toString());
+        assertThat(message.get("date").asString()).isEqualTo(TODAY.toString());
         assertThat(message.hasNonNull("occurredAt")).isTrue();
     }
 
