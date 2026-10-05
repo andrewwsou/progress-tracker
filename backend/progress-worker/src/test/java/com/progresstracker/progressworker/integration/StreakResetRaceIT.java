@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * The API's nightly streak reset running in the middle of a reward. The reward reads the habit,
+ * The API's hourly streak reset running in the middle of a reward. The reward reads the habit,
  * the reset zeroes the habit's lapsed streak and commits, and then the reward writes. The reward
  * must win: the habit was just completed, so its streak is 1, not 0.
  *
@@ -63,7 +63,7 @@ class StreakResetRaceIT extends WorkerIntegrationTestBase {
                     "select count(*) from pg_stat_activity where wait_event_type = 'Lock' and query ilike ?",
                     Integer.class, "%insert into habit_entries%") > 0);
 
-            // The nightly reset for this habit: its last completion is before yesterday.
+            // The hourly reset for this habit: its last completion is before yesterday.
             int reset = jdbc.update("update habit set current_streak = 0 "
                     + "where id = ? and current_streak > 0 and last_completed_date < ?", habitId, today.minusDays(1));
             assertThat(reset).isEqualTo(1);

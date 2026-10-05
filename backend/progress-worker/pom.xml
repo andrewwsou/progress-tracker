@@ -23,7 +23,7 @@
         <anthropic.version>2.68.0</anthropic.version>
         <wiremock.version>3.13.2</wiremock.version>
         <!-- Coverage ratchet: `verify` fails if line coverage drops below this. Raise it, never lower it. -->
-        <coverage.minimum>0.78</coverage.minimum>
+        <coverage.minimum>0.85</coverage.minimum>
     </properties>
 
     <dependencies>

@@ -13,8 +13,8 @@ import java.util.UUID;
  * message at least once, so the same event can arrive again; its id already being here is how
  * the worker knows to ignore the repeat.
  *
- * Rows are not purged yet. Deleting rows older than the queue's retention would be safe: a repeat
- * that arrives after its row is gone still stops at the "already has XP" check in
+ * Rows are deleted once they are older than the queue's retention ({@code ProcessedEventPurger}).
+ * A repeat that arrived after its row was gone would still stop at the "already has XP" check in
  * {@code CompletionProcessor}, before any XP or email.
  */
 @Entity

@@ -320,7 +320,7 @@ public class SqsPoller implements SmartLifecycle {
                     ? node.get("date").asString()
                     : node.path("completedDate").asString(null);
 
-            if (userIdNode.isMissingNode() || habitIdNode.isMissingNode() || dateStr == null || dateStr.isBlank()) {
+            if (!isLongId(userIdNode) || !isLongId(habitIdNode) || dateStr == null || dateStr.isBlank()) {
                 log.error("Invalid message schema (deleting message): {}", message.body());
                 invalid.increment();
                 delete(message);
@@ -381,6 +381,14 @@ public class SqsPoller implements SmartLifecycle {
         } catch (Exception e) {
             log.warn("Could not send the live-update notification for habit {}", habitId, e);
         }
+    }
+
+    /**
+     * An id must be a JSON integer that fits in a long. A missing id, null, a string (even "5") or
+     * an object can never succeed on a retry, so it makes the message invalid.
+     */
+    private static boolean isLongId(JsonNode node) {
+        return node.isIntegralNumber() && node.canConvertToLong();
     }
 
     /**

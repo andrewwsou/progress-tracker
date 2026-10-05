@@ -53,6 +53,11 @@ worker:
   # normal gap: one bounded SQS call (30 s) plus the longest backoff (30 s) plus a busy worker.
   pollStaleAfterSeconds: 120
 
+# Ids of the events the worker has handled (the inbox). Kept longer than the queue keeps a
+# message (14 days), so a redelivery always finds its event's id; older rows are purged hourly.
+processed-events:
+  retention-days: 15
+
 # Health checks and metrics. Only the worker's own network can reach this port; Compose does
 # not publish it, and in AWS it belongs behind a private security group.
 server:

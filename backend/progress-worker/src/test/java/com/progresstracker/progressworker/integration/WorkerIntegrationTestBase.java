@@ -76,8 +76,8 @@ abstract class WorkerIntegrationTestBase {
         registry.add("worker.waitTimeSeconds", () -> "1");
         registry.add("worker.visibilityTimeoutSeconds", () -> "2");
 
-        // The weekly-summary timer stays off in tests; the summary tests run the job by hand.
-        registry.add("summary.job.scheduling-enabled", () -> "false");
+        // The timers (weekly summaries, processed-events purge) stay off in tests; tests run the jobs by hand.
+        registry.add("worker.scheduling-enabled", () -> "false");
     }
 
     @Autowired

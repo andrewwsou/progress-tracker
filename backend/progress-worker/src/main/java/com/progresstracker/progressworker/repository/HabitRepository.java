@@ -17,7 +17,7 @@ public interface HabitRepository extends JpaRepository<Habit, Long> {
     /**
      * Applies one reward to the habit in a single statement, so every column is computed from the
      * row as it is now, not from a copy read earlier in the transaction. That matters because the
-     * API's nightly reset can zero the streak in between: writing back an earlier copy could then
+     * API's hourly reset can zero the streak in between: writing back an earlier copy could then
      * leave the reset's zero in place of the new streak.
      *
      * The current streak and last completion only move forward: a completion older than the

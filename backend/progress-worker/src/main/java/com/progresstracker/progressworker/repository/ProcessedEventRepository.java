@@ -27,4 +27,22 @@ public interface ProcessedEventRepository extends JpaRepository<ProcessedEvent, 
             on conflict (event_id) do nothing
             """, nativeQuery = true)
     int insertIfAbsent(@Param("eventId") UUID eventId, @Param("occurredAt") OffsetDateTime occurredAt);
+
+    /**
+     * Deletes up to {@code limit} events handled before the cutoff. Rows another worker's purge has
+     * locked are skipped, so two workers purging at once do not wait on each other.
+     *
+     * @return how many rows were deleted
+     */
+    @Modifying
+    @Query(value = """
+            delete from processed_events
+            where event_id in (
+                select event_id from processed_events
+                where processed_at < :cutoff
+                limit :limit
+                for update skip locked
+            )
+            """, nativeQuery = true)
+    int deleteProcessedBefore(@Param("cutoff") OffsetDateTime cutoff, @Param("limit") int limit);
 }

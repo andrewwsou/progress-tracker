@@ -5,9 +5,10 @@ import org.springframework.stereotype.Component;
 import java.util.Comparator;
 
 /**
- * Writes a plain summary from the numbers alone. Used when no API key is configured, when the
- * daily token budget is spent, and whenever the model's answer cannot be used, so every user
- * still gets a summary.
+ * Writes a plain summary from the numbers alone, so every user still gets one. Used when Claude
+ * is off (SUMMARY_LLM_ENABLED is not true, no API key is set, or the model is not on the
+ * allow-list), when the week is too big to send, when a daily cap on calls or tokens is reached,
+ * and whenever the model's answer cannot be used.
  */
 @Component
 public class TemplateSummaryWriter {

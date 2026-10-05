@@ -51,6 +51,14 @@ class ClaudeSummaryWriterTest {
     }
 
     @Test
+    void thePromptAsksForDigitsBecauseOnlyDigitsCanBeCheckedAgainstTheData() {
+        // SummaryValidator rejects number words, so a prompt without this would waste calls.
+        assertThat(ClaudeSummaryWriter.SYSTEM_PROMPT).contains("Write every number as digits.");
+        // "one" as a pronoun, "twice" and "third" are rejected too.
+        assertThat(ClaudeSummaryWriter.SYSTEM_PROMPT).contains("Use no number words at all, not even \"one\"");
+    }
+
+    @Test
     void thePromptSizeIsCountedInUtf8Bytes() {
         ClaudeSummaryWriter writer = writer("", true);
         WeekStats week = WeekStatsFixtures.habits(new WeekStats.HabitWeek("Read 📚", "DAILY", 1, 10, 1, 1));

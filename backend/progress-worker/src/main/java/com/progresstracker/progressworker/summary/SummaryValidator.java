@@ -2,6 +2,7 @@ package com.progresstracker.progressworker.summary;
 
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
@@ -14,8 +15,17 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>the headline and body are present and not too long,</li>
  *   <li>the focus habit is one of the user's habits, spelled exactly,</li>
- *   <li>every number in the text appears in the data, so the model cannot invent a statistic.</li>
+ *   <li>every number written in digits appears in the data,</li>
+ *   <li>no number is written as a word. Rejected, as whole words in any case, unless they are
+ *       part of a habit name written out in full: zero to twenty; thirty, forty, fifty, sixty,
+ *       seventy, eighty, ninety; hundred, thousand, dozen; once, twice, thrice; the ordinals third
+ *       to twentieth; thirtieth, fortieth, fiftieth, sixtieth, seventieth, eightieth, ninetieth,
+ *       hundredth, thousandth.</li>
  * </ul>
+ * "first" and "second" are allowed: they are usually not counts ("your first week", "a second
+ * wind"). "one" is rejected even as a pronoun ("one of your habits"), since it cannot be told
+ * apart from a count; the prompt asks for no number words at all. Other habit names mentioned in
+ * the body are not checked; only the focus habit has to be one of the user's.
  */
 @Component
 public class SummaryValidator {
@@ -25,6 +35,16 @@ public class SummaryValidator {
 
     /** Whole numbers, allowing thousands separators: 7, 106, 1,250. */
     private static final Pattern NUMBER = Pattern.compile("\\d{1,3}(?:,\\d{3})+|\\d+");
+
+    /** Numbers written as words, which the digit check above cannot see. Whole words, any case. */
+    private static final Pattern NUMBER_WORD = Pattern.compile("\\b(?:zero|one|two|three|four|five|six|seven|eight"
+            + "|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty"
+            + "|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|dozen"
+            + "|once|twice|thrice"
+            + "|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth"
+            + "|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth"
+            + "|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth)\\b",
+            Pattern.CASE_INSENSITIVE);
 
     /** @return what is wrong with the summary, or empty if it can be shown */
     public Optional<String> findProblem(SummaryOutput output, WeekStats stats) {
@@ -44,15 +64,39 @@ public class SummaryValidator {
             return Optional.of("focusHabit is not one of the user's habits");
         }
 
+        String text = output.headline() + "\n" + output.body();
         Set<Long> allowed = numbersInData(stats);
-        Matcher matcher = NUMBER.matcher(output.headline() + "\n" + output.body());
+        Matcher matcher = NUMBER.matcher(text);
         while (matcher.find()) {
             String digits = matcher.group().replace(",", "");
             if (digits.length() > 9 || !allowed.contains(Long.parseLong(digits))) {
                 return Optional.of("mentions " + matcher.group() + ", which is not in the data");
             }
         }
+        Matcher word = NUMBER_WORD.matcher(withoutHabitNames(text, stats));
+        if (word.find()) {
+            return Optional.of("writes the number \"" + word.group() + "\" as a word");
+        }
         return Optional.empty();
+    }
+
+    /**
+     * The text with the user's habit names taken out, longest first, so a name like "Drink eight
+     * glasses" can still be mentioned. Those words are the user's, not a statistic. A name is only
+     * taken out where it stands as whole words: a habit called "e" must not hide the e's in "three",
+     * and one called "Every" must not turn "Everyone" into "one".
+     */
+    private static String withoutHabitNames(String text, WeekStats stats) {
+        String rest = text;
+        for (String name : stats.habitNames().stream()
+                .filter(name -> name != null && !name.isBlank())
+                .sorted(Comparator.comparingInt(String::length).reversed())
+                .toList()) {
+            rest = Pattern.compile("(?<![\\p{L}\\p{N}])" + Pattern.quote(name) + "(?![\\p{L}\\p{N}])")
+                    .matcher(rest)
+                    .replaceAll(" ");
+        }
+        return rest;
     }
 
     /** Every number the model may use: the statistics, the dates of the week, and digits in habit names. */

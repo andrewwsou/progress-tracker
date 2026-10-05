@@ -174,7 +174,11 @@ class CompletionPipelineIT extends WorkerIntegrationTestBase {
         List<String> poison = List.of(
                 "this is not json",
                 "{\"habitId\": 1}",
-                "{\"userId\": 1, \"habitId\": 1, \"date\": \"not-a-date\"}");
+                "{\"userId\": 1, \"habitId\": 1, \"date\": \"not-a-date\"}",
+                // Ids must be JSON integers: read as 0, a null user would be retried into the DLQ.
+                "{\"userId\": null, \"habitId\": 1, \"date\": \"2026-10-04\"}",
+                "{\"userId\": \"abc\", \"habitId\": 1, \"date\": \"2026-10-04\"}",
+                "{\"userId\": 1, \"habitId\": {}, \"date\": \"2026-10-04\"}");
         poison.forEach(body -> LocalSqs.send(QUEUE_URL, body));
 
         long userId = insertUser();

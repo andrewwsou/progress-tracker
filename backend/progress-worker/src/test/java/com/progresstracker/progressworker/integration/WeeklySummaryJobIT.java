@@ -88,7 +88,7 @@ class WeeklySummaryJobIT extends WorkerIntegrationTestBase {
         seedWeek(userId);
         long summaryId = requestSummary(userId);
         stubClaude(okJson(message(output("Read carried your week",
-                "You completed Read 3 times and Meditate once for 46 XP. Your longest Read streak is 9 days.",
+                "You completed Read 3 times and Meditate 1 time for 46 XP. Your longest Read streak is 9 days.",
                 "Meditate"), "end_turn", 412, 96)));
 
         assertThat(job.runOnce()).isEqualTo(1);

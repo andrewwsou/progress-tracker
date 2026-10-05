@@ -6,6 +6,8 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import org.springframework.test.util.ReflectionTestUtils;
 import software.amazon.awssdk.core.exception.SdkClientException;
@@ -29,11 +31,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -189,8 +193,9 @@ class SqsPollerTest {
         await().atMost(Duration.ofSeconds(5)).until(() -> events("applied") == 1);
         assertThat(events("failed")).isEqualTo(1);
         verify(sqs, times(1)).deleteMessage(any(DeleteMessageRequest.class)); // only the one that worked
-        // Only the reward that committed is announced to the API.
-        verify(notifier, times(1)).rewardApplied(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
+        // Only the reward that committed is announced to the API. The worker thread announces it
+        // just after counting it, so wait for the call rather than expect it already made.
+        verify(notifier, timeout(2_000).times(1)).rewardApplied(anyLong(), anyLong());
     }
 
     @Test
@@ -202,6 +207,80 @@ class SqsPollerTest {
         await().atMost(Duration.ofSeconds(5)).until(() -> deleted.get() == 1);
         assertThat(events("invalid")).isEqualTo(1);
         verify(processor, never()).process(any(), any(), any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\"abc\"", "{}", "null", "\"5\""})
+    void anIdThatIsNotAWholeNumberMakesTheMessageInvalid(String id) {
+        // Read as 0 or coerced, these would be retried into the dead-letter queue or rewarded.
+        // The API always writes ids as JSON numbers, so anything else is a bad message.
+        queue.add(Message.builder().messageId("bad-user").receiptHandle("r-bad-user")
+                .body("{\"eventId\":\"" + UUID.randomUUID() + "\",\"userId\":" + id + ",\"habitId\":1,\"date\":\"2026-10-01\"}")
+                .build());
+        queue.add(Message.builder().messageId("bad-habit").receiptHandle("r-bad-habit")
+                .body("{\"eventId\":\"" + UUID.randomUUID() + "\",\"userId\":1,\"habitId\":" + id + ",\"date\":\"2026-10-01\"}")
+                .build());
+
+        startPoller(1, 5);
+
+        await().atMost(Duration.ofSeconds(5)).until(() -> deleted.get() == 2);
+        assertThat(events("invalid")).isEqualTo(2);
+        verify(processor, never()).process(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aClientThePollerBuiltIsReplacedWhenItStartsAgain() {
+        // A paused and resumed Spring test context stops and starts the poller. The first client
+        // is closed by then, so the second start has to build a new one.
+        poller = new SqsPoller(new JsonMapper(), processor, notifier, metrics);
+        ReflectionTestUtils.setField(poller, "workerEnabled", true);
+        ReflectionTestUtils.setField(poller, "queueEnabled", true);
+        // Nothing listens on port 9, so each poll fails at once and the loop backs off.
+        ReflectionTestUtils.setField(poller, "sqsUrl", "http://127.0.0.1:9/000000000000/q");
+        ReflectionTestUtils.setField(poller, "endpointOverride", "http://127.0.0.1:9");
+        ReflectionTestUtils.setField(poller, "awsRegion", "us-west-1");
+        ReflectionTestUtils.setField(poller, "waitTimeSeconds", 1);
+        ReflectionTestUtils.setField(poller, "concurrency", 1);
+        ReflectionTestUtils.setField(poller, "shutdownTimeoutSeconds", 5);
+        poller.pollErrorBackoffMs = 10;
+        // Test keys, so the SDK signs the request at once instead of searching the machine for keys.
+        boolean setKeys = System.getProperty("aws.accessKeyId") == null;
+        if (setKeys) {
+            System.setProperty("aws.accessKeyId", "test");
+            System.setProperty("aws.secretAccessKey", "test");
+        }
+        try {
+            poller.start();
+            Object first = ReflectionTestUtils.getField(poller, "sqsClient");
+            assertThat(first).isNotNull();
+            poller.stop();
+
+            assertThat(ReflectionTestUtils.getField(poller, "sqsClient")).isNull();
+
+            poller.start();
+
+            assertThat(ReflectionTestUtils.getField(poller, "sqsClient")).isNotNull().isNotSameAs(first);
+        } finally {
+            poller.stop();
+            if (setKeys) {
+                System.clearProperty("aws.accessKeyId");
+                System.clearProperty("aws.secretAccessKey");
+            }
+        }
+    }
+
+    @Test
+    void aClientPassedInIsKeptWhenThePollerStartsAgain() {
+        when(processor.process(any(), any(), any(), any(), any())).thenReturn(true);
+        startPoller(1, 5);
+        poller.stop();
+
+        poller.start();
+
+        assertThat(ReflectionTestUtils.getField(poller, "sqsClient")).isSameAs(sqs);
+        enqueue(1);
+        await().atMost(Duration.ofSeconds(5)).until(() -> deleted.get() == 1);
+        assertThat(events("applied")).isEqualTo(1);
     }
 
     @Test

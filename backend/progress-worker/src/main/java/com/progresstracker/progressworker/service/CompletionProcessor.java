@@ -30,7 +30,7 @@ import java.util.UUID;
  *   <li>under that lock, a completion that already has XP is never rewarded again. This is what
  *       makes one completion earn one reward, even if it arrives as two different events;</li>
  *   <li>the habit's totals are updated in one statement from the row as it is now, and the current
- *       streak only moves forward, so neither an old event arriving late nor the nightly streak
+ *       streak only moves forward, so neither an old event arriving late nor the hourly streak
  *       reset running at the same moment can leave it wrong;</li>
  *   <li>any failure rolls everything back, including the event id, and the queue redelivers.</li>
  * </ol>
@@ -116,11 +116,13 @@ public class CompletionProcessor {
         habitEntryRepository.save(entry);
 
         // One statement against the current row (see applyReward): events can arrive out of
-        // order, and the nightly reset can change the streak after the habit was read above.
+        // order, and the hourly reset can change the streak after the habit was read above.
         habitRepository.applyReward(habitId, date, streak, xpEarned);
         Habit saved = habitRepository.findById(habitId).orElseThrow(); // the updated row
 
         achievementService.evaluateAndUnlock(user, saved);
+        // Only a log line for now. A real sender must go through an outbox row written in this
+        // transaction, so an email is sent once and only after the reward commits.
         emailService.queueCompletionEmail(user, saved.getName());
         return true;
     }
