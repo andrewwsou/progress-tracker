@@ -1,5 +1,6 @@
 package com.progresstracker.progresstracker.config;
 
+import jakarta.servlet.DispatcherType;
 import com.progresstracker.progresstracker.security.BearerAuthenticationEntryPoint;
 import com.progresstracker.progresstracker.security.JwtAuthFilter;
 import org.springframework.context.annotation.Bean;
@@ -38,6 +39,10 @@ public class SecurityConfig {
                 // No valid token: answer 401, not Spring Security's default 403.
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(authenticationEntryPoint))
                 .authorizeHttpRequests(auth -> auth
+                        // The second dispatch that finishes an asynchronous response (an event
+                        // stream closing). Its request was authorized when it started; the JWT
+                        // filter does not run again for it.
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         // Liveness probe for containers and load balancers. Exposes status only.

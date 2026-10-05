@@ -155,6 +155,25 @@ same backlog at 201 events/s in one run, so the gain comes from the threads, not
 else in the change. Three earlier baseline runs, before the alternating series, measured 175, 205,
 and 229 events/s while the machine warmed up; they are left out of the median above.
 
+## 7. The cost of live-update notifications
+
+Live updates make the worker send a PostgreSQL `NOTIFY` for every reward. A transaction that
+sends `NOTIFY` holds a database-wide lock while it commits, so the question was whether that
+slows the worker. Same drain scenario as section 6 (`RATE=100 DURATION=60 USERS=50`, 8 threads),
+three builds run in turn, A then B then C, twice:
+
+| Build | Round 1 | Round 2 | Mean |
+|---|---:|---:|---:|
+| A: no notifications (the commit before live updates) | 440 events/s | 502 events/s | 471 events/s |
+| B: `NOTIFY` inside the reward transaction | 401 events/s | 442 events/s | 421 events/s |
+| C: `NOTIFY` just after the reward commits (shipped) | 514 events/s | 477 events/s | 496 events/s |
+
+B was the slowest build in both rounds, about 10% below A: inside the transaction the lock made
+the threads' commits wait for each other. C is within run-to-run noise of A, so the shipped
+version costs nothing measurable. All three builds passed every database check. These runs are
+slower than section 6 across the board (the machine was busier); compare them with each other,
+not with the earlier table.
+
 ## What I would look at next
 
 - **The first completion in sync mode.** It is the slow tail in section 2, and the same

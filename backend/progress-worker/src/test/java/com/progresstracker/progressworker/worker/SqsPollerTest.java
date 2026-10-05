@@ -1,6 +1,7 @@
 package com.progresstracker.progressworker.worker;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.progresstracker.progressworker.events.HabitEventNotifier;
 import com.progresstracker.progressworker.service.CompletionProcessor;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +43,7 @@ class SqsPollerTest {
 
     private final SqsClient sqs = mock(SqsClient.class);
     private final CompletionProcessor processor = mock(CompletionProcessor.class);
+    private final HabitEventNotifier notifier = mock(HabitEventNotifier.class);
     private final SimpleMeterRegistry metrics = new SimpleMeterRegistry();
     private final Queue<Message> queue = new ConcurrentLinkedQueue<>();
     private final AtomicInteger received = new AtomicInteger();
@@ -80,7 +82,7 @@ class SqsPollerTest {
     }
 
     private void startPoller(int concurrency, int shutdownTimeoutSeconds) {
-        poller = new SqsPoller(new ObjectMapper(), processor, metrics, sqs);
+        poller = new SqsPoller(new ObjectMapper(), processor, notifier, metrics, sqs);
         ReflectionTestUtils.setField(poller, "workerEnabled", true);
         ReflectionTestUtils.setField(poller, "queueEnabled", true);
         ReflectionTestUtils.setField(poller, "sqsUrl", "http://sqs.test/000000000000/completions");
@@ -187,6 +189,8 @@ class SqsPollerTest {
         await().atMost(Duration.ofSeconds(5)).until(() -> events("applied") == 1);
         assertThat(events("failed")).isEqualTo(1);
         verify(sqs, times(1)).deleteMessage(any(DeleteMessageRequest.class)); // only the one that worked
+        // Only the reward that committed is announced to the API.
+        verify(notifier, times(1)).rewardApplied(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
     }
 
     @Test

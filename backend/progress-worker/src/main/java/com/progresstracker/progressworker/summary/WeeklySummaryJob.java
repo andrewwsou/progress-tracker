@@ -1,5 +1,6 @@
 package com.progresstracker.progressworker.summary;
 
+import com.progresstracker.progressworker.events.HabitEventNotifier;
 import com.progresstracker.progressworker.model.WeeklySummary;
 import com.progresstracker.progressworker.service.EmailService;
 import org.slf4j.Logger;
@@ -24,6 +25,7 @@ public class WeeklySummaryJob {
     private final WeeklyStatsReader statsReader;
     private final SummaryGenerator generator;
     private final EmailService emailService;
+    private final HabitEventNotifier eventNotifier;
     private final SummaryProperties.Job config;
     private volatile boolean shuttingDown;
 
@@ -31,11 +33,13 @@ public class WeeklySummaryJob {
                             WeeklyStatsReader statsReader,
                             SummaryGenerator generator,
                             EmailService emailService,
+                            HabitEventNotifier eventNotifier,
                             SummaryProperties properties) {
         this.store = store;
         this.statsReader = statsReader;
         this.generator = generator;
         this.emailService = emailService;
+        this.eventNotifier = eventNotifier;
         this.config = properties.job();
     }
 
@@ -91,9 +95,19 @@ public class WeeklySummaryJob {
                     usage == null ? null : usage.latencyMs(),
                     summary.fallbackReason());
             emailService.queueWeeklySummaryEmail(claim.userId(), result.headline());
+            notifySummaryReady(claim);
         } catch (RuntimeException e) {
             log.error("Weekly summary {} failed on attempt {}; it will be retried", claim.id(), claim.attempt(), e);
             store.release(claim, config.maxAttempts(), e.toString());
+        }
+    }
+
+    /** Saved and committed: tell the API so an open page shows it. Best effort: it is only a hint. */
+    private void notifySummaryReady(WeeklySummaryStore.Claim claim) {
+        try {
+            eventNotifier.summaryReady(claim.userId());
+        } catch (RuntimeException e) {
+            log.warn("Could not send the live-update notification for summary {}", claim.id(), e);
         }
     }
 

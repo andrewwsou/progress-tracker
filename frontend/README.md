@@ -12,7 +12,9 @@ npm run build
 npm run generate:api   # regenerate src/api-types.ts after the API's OpenAPI contract changes
 ```
 
-`src/api.ts` is the only place that talks to the API. Its types come from
+`src/api.ts` is the only place that talks to the API, including the live-update stream
+(`streamEvents`: server-sent events read with `fetch`, because `EventSource` cannot send the
+`Authorization` header). Its types come from
 `../backend/progresstracker/openapi.json`, so a field renamed on the server is a compile error
 here, and CI fails if the generated file is out of date.
 

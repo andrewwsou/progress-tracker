@@ -16,6 +16,9 @@ delivered twice, out of order, or after the worker crashes.
   idempotent consumer in the worker (a processed-event table and a per-user row lock). At 100
   completions per second, with the worker killed and the queue frozen mid-run, no request failed
   and every completion was rewarded exactly once.
+- **Live updates.** Once a reward commits, the worker announces it with PostgreSQL `NOTIFY`; the
+  API pushes it to the user's open tabs over server-sent events, and the page updates without
+  polling.
 - **Correct under contention.** 8,000 requests completing the same habit, up to 1,000 in flight
   at once, all succeeded, with one completion and one reward recorded.
 - **Measured, then optimised.** A k6 harness checks the database after every run. It led to a
@@ -43,6 +46,8 @@ flowchart LR
     Q -->|"long poll"| W["Worker<br/>Spring Boot, 8 threads"]
     W -->|"reward, exactly once:<br/>XP, streak, achievements"| DB
     W -.->|"weekly summaries, opt-in"| LLM["Claude API"]
+    DB -.->|"NOTIFY on commit"| API
+    API -.->|"server-sent events"| UI
     EB["EventBridge + Lambda"] -->|"nightly streak reset,<br/>weekly summary requests"| API
 ```
 
@@ -89,6 +94,7 @@ which is left blank in production so the AWS SDK resolves the real SQS endpoint.
 | POST | `/api/habits/{id}/complete` | Record a completion (sync or async, see below) |
 | GET | `/api/achievements` | Unlocked achievements for the current user |
 | GET | `/api/summaries/latest` | The caller's newest finished weekly summary (204 if none yet) |
+| GET | `/api/events` | Live updates for the caller as server-sent events: `ready`, then `reward` and `summary` as the worker finishes them |
 | POST | `/api/internal/automations/reset-streaks` | Zero out streaks for habits nobody completed recently. Auth: `X-Internal-Token` header, not JWT — meant for the scheduled Lambda in `infra/lambda`, not end users. |
 | POST | `/api/internal/automations/weekly-summary` | Ask for last week's summary for every active user (optional `?weekStart=` for any other week). Same auth model. |
 
@@ -153,6 +159,26 @@ queue only promises at-least-once, unordered delivery.
   can't help) from **transient processing failures** (left on the queue so SQS redelivers after
   the visibility timeout; safe because processing is idempotent). A message that fails 5 times
   moves to the **dead-letter queue**, and a CloudWatch alarm fires as soon as one is there.
+
+**Live updates.** When a reward (or a weekly summary) has committed, the worker runs
+`pg_notify('habit_events', ...)`, so a browser is never told about a reward that did not happen.
+It runs just after the commit rather than inside the reward transaction: a transaction that sends
+`NOTIFY` holds a database-wide lock while it commits, and inside the reward transaction that lock
+made the eight worker threads' commits queue behind each other (see load/RESULTS.md section 7).
+The cost is that a crash between commit and notify loses one notification, which is only a hint. Each API instance holds one `LISTEN` connection outside the pool and
+forwards an event to the open streams of the user it names
+([`PostgresEventListener`](backend/progresstracker/src/main/java/com/progresstracker/progresstracker/events/PostgresEventListener.java),
+[`UserEventStreams`](backend/progresstracker/src/main/java/com/progresstracker/progresstracker/events/UserEventStreams.java)).
+An event only says "something changed"; the page then reads the new state through the normal
+endpoints, so a missed event costs a moment of staleness, never wrong data, and the page also
+refreshes whenever its stream reconnects. The browser reads the stream with `fetch` because
+`EventSource` cannot send the `Authorization` header. Because notifications sent while nobody
+listens are lost, the listener tells every open stream to re-read after each reconnect, and it
+checks its connection every 30 seconds so a database that vanished without closing it is noticed.
+A user keeps at most five streams (opening a sixth closes the oldest), a hidden tab drops its
+stream and catches up when shown again, and the client reconnects with backoff if the stream goes
+silent. On shutdown the streams are closed before the web server's graceful shutdown, which would
+otherwise wait out its timeout for streams that never end.
 
 **The worker under load and in operation.**
 - **Bounded concurrency with backpressure.** Messages are processed by a fixed pool of 8 threads
@@ -270,6 +296,8 @@ PostgreSQL and an SQS-compatible broker in Docker and run the actual services ag
 | [`CompletionOutboxIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/CompletionOutboxIT.java) | The completion and its event are written together and the relay publishes the event; if the event cannot be written, the completion is rolled back with it; 20 simultaneous completions leave exactly one event; an event written while the queue is down is delivered once it is back. |
 | [`OutboxRelayIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/OutboxRelayIT.java) | A relay skips rows another relay has locked instead of waiting for them; six relays released together publish each of 30 events exactly once; the purge removes old published events and never an unpublished one. |
 | [`CompletionPipelineIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/CompletionPipelineIT.java) | The worker grants XP, streaks, and achievements from a queued event; duplicate deliveries grant the reward once; malformed messages are deleted; a failure mid-processing rolls back and the redelivery succeeds; a message that always fails moves to the dead-letter queue after 5 attempts; a user whose reward is stuck on a lock does not hold up another user's (this fails with one thread); health and metrics report the worker. |
+| [`HabitEventNotifierIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/HabitEventNotifierIT.java) | A reward applied from the queue notifies the API once it has committed; a notification sent in a transaction that rolls back is never delivered. |
+| [`EventStreamIT`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/integration/EventStreamIT.java) | A notification reaches the open event stream of the user it names and no one else's; the stream needs a login. |
 | [`StreakResetRaceIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakResetRaceIT.java) | The nightly streak reset committing in the middle of a reward cannot leave the just-completed habit with a zero streak. The test forces the interleaving with a second connection; the previous code failed it. |
 | [`ConcurrentProcessingIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/ConcurrentProcessingIT.java) | Several workers at once: the same event handled twice rewards and emails once; two days of one habit handled together lose no XP; different habits of one new user unlock the first achievement once. All of these failed before the event-id table and the per-user lock. Also: an older day handled late still earns its streak without rewinding the current one, and a reward does not undo an edit made meanwhile. |
 | [`StreakQueryIT`](backend/progress-worker/src/test/java/com/progresstracker/progressworker/integration/StreakQueryIT.java) | The single-query streak calculation gives the same answer as counting back one day (or week) at a time, on 120 random completion histories, including across a year boundary. |

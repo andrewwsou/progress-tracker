@@ -443,6 +443,38 @@
         ]
       }
     },
+    "/api/events" : {
+      "get" : {
+        "description" : "A server-sent event stream. The first event is `ready`; after that, `reward` when the worker has applied a completion's reward and `summary` when a weekly summary is written. Each event's data is a small JSON object; read the new state through the other endpoints.",
+        "operationId" : "events",
+        "responses" : {
+          "200" : {
+            "content" : {
+              "text/event-stream" : {
+                "schema" : {
+                  "type" : "string"
+                }
+              }
+            },
+            "description" : "The stream, open until the client disconnects or it times out"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing or invalid bearer token"
+          }
+        },
+        "summary" : "Live updates for the caller",
+        "tags" : [
+          "Events"
+        ]
+      }
+    },
     "/api/habits" : {
       "get" : {
         "operationId" : "getAllHabits",

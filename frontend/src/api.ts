@@ -148,3 +148,64 @@ export async function completeHabit(habitId: number): Promise<Habit> {
   if (!res.ok) throw await toError(res, "Failed to complete habit");
   return res.json();
 }
+
+/** A live update from the API: something changed, so read the new state. */
+export type LiveEvent = { type: "ready" | "reward" | "summary" | "resync" | string };
+
+// The server sends a keep-alive every 25 s; this long without any bytes means the connection is dead.
+const STREAM_SILENCE_LIMIT_MS = 60_000;
+
+/**
+ * Opens the caller's live-update stream (server-sent events) and calls onEvent for each event
+ * until the stream ends or the signal aborts. Uses fetch rather than EventSource because
+ * EventSource cannot send the Authorization header.
+ */
+export async function streamEvents(onEvent: (event: LiveEvent) => void, signal: AbortSignal): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/events`, {
+    headers: { Accept: "text/event-stream", ...authHeaders() },
+    signal,
+  });
+  if (!res.ok || !res.body) throw await toError(res, "Live updates are unavailable");
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  let type = "message";
+  let hasData = false;
+  for (;;) {
+    const { value, done } = await readWithin(reader, STREAM_SILENCE_LIMIT_MS);
+    if (done) return;
+    buffer += value;
+    // Events are separated by a blank line; each line is "field:value". Lines starting with ":"
+    // are comments (keep-alives). As the SSE spec says, a block without data is not an event.
+    let newline: number;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newline).replace(/\r$/, "");
+      buffer = buffer.slice(newline + 1);
+      if (line === "") {
+        if (hasData) onEvent({ type });
+        type = "message";
+        hasData = false;
+      } else if (line.startsWith("event:")) {
+        type = line.slice("event:".length).trim();
+      } else if (line === "data" || line.startsWith("data:")) {
+        hasData = true;
+      }
+    }
+  }
+}
+
+/** One read, or an error (after cancelling the stream) if nothing arrives within the limit. */
+async function readWithin(reader: ReadableStreamDefaultReader<string>, limitMs: number) {
+  let timer: number | undefined;
+  const silence = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => {
+      void reader.cancel();
+      reject(new Error("The live-update stream went silent"));
+    }, limitMs);
+  });
+  try {
+    return await Promise.race([reader.read(), silence]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}

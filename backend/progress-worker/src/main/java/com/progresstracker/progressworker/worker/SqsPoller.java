@@ -2,6 +2,7 @@ package com.progresstracker.progressworker.worker;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.progresstracker.progressworker.events.HabitEventNotifier;
 import com.progresstracker.progressworker.service.CompletionProcessor;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
@@ -63,6 +64,7 @@ public class SqsPoller implements SmartLifecycle {
 
     private final ObjectMapper objectMapper;
     private final CompletionProcessor completionProcessor;
+    private final HabitEventNotifier eventNotifier;
 
     @Value("${worker.enabled:true}")
     private boolean workerEnabled;
@@ -120,15 +122,17 @@ public class SqsPoller implements SmartLifecycle {
     private final Timer lag;
 
     @Autowired
-    public SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor, MeterRegistry meterRegistry) {
-        this(objectMapper, completionProcessor, meterRegistry, null);
+    public SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor, HabitEventNotifier eventNotifier,
+                     MeterRegistry meterRegistry) {
+        this(objectMapper, completionProcessor, eventNotifier, meterRegistry, null);
     }
 
     /** For tests: uses the given client instead of building one. */
-    SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor, MeterRegistry meterRegistry,
-              SqsClient sqsClient) {
+    SqsPoller(ObjectMapper objectMapper, CompletionProcessor completionProcessor, HabitEventNotifier eventNotifier,
+              MeterRegistry meterRegistry, SqsClient sqsClient) {
         this.objectMapper = objectMapper;
         this.completionProcessor = completionProcessor;
+        this.eventNotifier = eventNotifier;
         this.sqsClient = sqsClient;
 
         this.applied = events(meterRegistry, "applied");
@@ -353,6 +357,7 @@ public class SqsPoller implements SmartLifecycle {
                 }
                 log.info("Processed completion eventId={} userId={} habitId={} date={} elapsedMs={}",
                         eventId, userId, habitId, date, elapsedMs);
+                notifyRewardApplied(userId, habitId);
             } else {
                 skipped.increment();
                 log.info("No reward applied eventId={} habitId={} date={} (already handled, or habit deleted)",
@@ -362,6 +367,15 @@ public class SqsPoller implements SmartLifecycle {
             failed.increment();
             log.error("Failed processing completion eventId={} userId={} habitId={} date={} (leaving message for retry): {}",
                     eventId, userId, habitId, date, e.getMessage(), e);
+        }
+    }
+
+    /** The reward has committed; tell the API so open pages update. Best effort: it is only a hint. */
+    private void notifyRewardApplied(long userId, long habitId) {
+        try {
+            eventNotifier.rewardApplied(userId, habitId);
+        } catch (Exception e) {
+            log.warn("Could not send the live-update notification for habit {}", habitId, e);
         }
     }
 

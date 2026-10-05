@@ -65,7 +65,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
+            <!-- Compile scope: the event listener uses the driver's LISTEN/NOTIFY API. -->
         </dependency>
 
         <dependency>

@@ -8,6 +8,7 @@ import {
   fetchAchievements,
   fetchHabits,
   fetchLatestSummary,
+  streamEvents,
   updateHabit,
 } from "../api";
 import { errorText, longDate } from "../format";
@@ -32,9 +33,12 @@ async function fetchDashboard(): Promise<DashboardData> {
   return { habits, achievements, summary };
 }
 
-// When the backend runs in async mode the worker applies a reward a moment after the request
-// returns, so look again shortly afterwards for the new XP, streak, and achievements.
+// In async mode the worker applies a reward a moment after the request returns. The live stream
+// says when; without it (stream down), look again after this long instead.
 const REWARD_REFRESH_DELAY_MS = 1500;
+const MAX_RECONNECT_DELAY_MS = 30_000;
+// Events that mean "your data changed, read it again".
+const REFRESH_EVENTS = new Set(["ready", "reward", "summary", "resync"]);
 
 export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -47,8 +51,13 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
   const [busyIds, setBusyIds] = useState<ReadonlySet<number>>(new Set());
 
   const refreshTimer = useRef<number | undefined>(undefined);
+  // Whether the live stream is connected; when it is, rewards arrive as events instead of by timer.
+  const live = useRef(false);
+  // Only the newest refresh may update the screen; an older response arriving late is dropped.
+  const latestRefresh = useRef(0);
 
-  const showData = useCallback((data: DashboardData) => {
+  const showData = useCallback((data: DashboardData, refresh: number) => {
+    if (refresh !== latestRefresh.current) return;
     setHabits(data.habits);
     setAchievements(data.achievements);
     setSummary(data.summary);
@@ -68,22 +77,84 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
     [onSignOut],
   );
 
-  const load = useCallback(() => fetchDashboard().then(showData, showLoadError), [showData, showLoadError]);
+  const load = useCallback(() => {
+    const refresh = ++latestRefresh.current;
+    return fetchDashboard().then((data) => showData(data, refresh), showLoadError);
+  }, [showData, showLoadError]);
 
   /** A refresh nobody asked for: a failure is not worth a banner, but a rejected token still signs out. */
-  const refreshQuietly = useCallback(
-    () =>
-      fetchDashboard().then(showData, (err) => {
+  const refreshQuietly = useCallback(() => {
+    const refresh = ++latestRefresh.current;
+    return fetchDashboard().then(
+      (data) => showData(data, refresh),
+      (err) => {
         if (err instanceof ApiError && err.status === 401) onSignOut();
-      }),
-    [showData, onSignOut],
-  );
+      },
+    );
+  }, [showData, onSignOut]);
+
+  // Live updates: refresh when the worker applies a reward or writes a summary. Reconnects with
+  // backoff, and refreshes on every (re)connect in case an event was missed while disconnected.
+  // A hidden tab lets its stream go (browsers allow only a few connections per server) and
+  // reconnects, catching up, when it is shown again.
+  useEffect(() => {
+    let controller: AbortController | null = null;
+
+    async function connect(signal: AbortSignal) {
+      let delay = 1000;
+      while (!signal.aborted) {
+        try {
+          await streamEvents((event) => {
+            if (event.type === "ready") {
+              live.current = true;
+              delay = 1000;
+            }
+            if (REFRESH_EVENTS.has(event.type)) void refreshQuietly();
+          }, signal);
+        } catch (err) {
+          if (signal.aborted) return;
+          if (err instanceof ApiError && err.status === 401) {
+            onSignOut();
+            return;
+          }
+        }
+        live.current = false;
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS);
+      }
+    }
+
+    function start() {
+      if (controller) return;
+      controller = new AbortController();
+      void connect(controller.signal);
+    }
+
+    function pause() {
+      live.current = false;
+      controller?.abort();
+      controller = null;
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") pause();
+      else start();
+    }
+
+    if (document.visibilityState !== "hidden") start();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      pause();
+    };
+  }, [refreshQuietly, onSignOut]);
 
   // First load. A response that arrives after the dashboard has gone (signed out) is dropped.
   useEffect(() => {
     let active = true;
+    const refresh = ++latestRefresh.current;
     fetchDashboard().then(
-      (data) => active && showData(data),
+      (data) => active && showData(data, refresh),
       (err) => active && showLoadError(err),
     );
     return () => {
@@ -124,8 +195,10 @@ export function Dashboard({ onSignOut }: { onSignOut: () => void }) {
       habit,
       async () => {
         await completeHabit(habit.id);
-        window.clearTimeout(refreshTimer.current);
-        refreshTimer.current = window.setTimeout(() => void refreshQuietly(), REWARD_REFRESH_DELAY_MS);
+        if (!live.current) {
+          window.clearTimeout(refreshTimer.current);
+          refreshTimer.current = window.setTimeout(() => void refreshQuietly(), REWARD_REFRESH_DELAY_MS);
+        }
       },
       `Could not complete “${habit.name}”.`,
     );
