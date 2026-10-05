@@ -2,6 +2,7 @@ package com.progresstracker.progresstracker.model;
 
 import jakarta.persistence.*;
 
+/** An achievement's definition. Read-only here: the rows come from a migration (V4__seed_achievements.sql). */
 @Entity
 @Table(
         name = "achievement",
@@ -31,59 +32,27 @@ public class Achievement {
     public Achievement() {
     }
 
-    public Achievement(String code, String name, String description, Integer threshold, String type) {
-        this.code = code;
-        this.name = name;
-        this.description = description;
-        this.threshold = threshold;
-        this.type = type;
-    }
-
     public Long getId() {
         return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
     }
 
     public String getCode() {
         return code;
     }
 
-    public void setCode(String code) {
-        this.code = code;
-    }
-
     public String getName() {
         return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
     }
 
     public String getDescription() {
         return description;
     }
 
-    public void setDescription(String description) {
-        this.description = description;
-    }
-
     public Integer getThreshold() {
         return threshold;
     }
 
-    public void setThreshold(Integer threshold) {
-        this.threshold = threshold;
-    }
-
     public String getType() {
         return type;
-    }
-
-    public void setType(String type) {
-        this.type = type;
     }
 }

@@ -37,7 +37,7 @@ import org.springframework.http.ProblemDetail;
         bearerFormat = "JWT")
 public class OpenApiConfig {
 
-    static final String BEARER_AUTH = "bearerAuth";
+    public static final String BEARER_AUTH = "bearerAuth";
 
     private static final String PROBLEM_SCHEMA = "ProblemDetail";
     private static final String PROBLEM_JSON = org.springframework.http.MediaType.APPLICATION_PROBLEM_JSON_VALUE;

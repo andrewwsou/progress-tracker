@@ -58,14 +58,14 @@ public class UserEventStreams implements SmartLifecycle {
 
     /**
      * Opens a stream for the user. The first event, {@code ready}, tells the client it is live.
-     * A user may hold a few streams (tabs); opening one more closes their oldest, so one account
-     * cannot tie up the server's connections.
+     * A user may hold a few streams (tabs); opening one more closes their oldest, after an
+     * {@code evicted} event, so one account cannot tie up the server's connections.
      */
     public SseEmitter subscribe(long userId) {
         if (!running) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Shutting down");
         }
-        SseEmitter emitter = new SseEmitter(timeout.toMillis());
+        SseEmitter emitter = newEmitter(timeout.toMillis());
         SseEmitter[] evicted = new SseEmitter[1];
         // One atomic step per user, so a concurrent remove cannot unmap the list this joins.
         streams.compute(userId, (id, userStreams) -> {
@@ -77,6 +77,9 @@ public class UserEventStreams implements SmartLifecycle {
             return list;
         });
         if (evicted[0] != null) {
+            // Says why it is closing. A client that simply reconnected would evict the next oldest,
+            // and that one the next, round and round for as long as the user keeps them all open.
+            send(userId, evicted[0], SseEmitter.event().name("evicted").data("{}", MediaType.APPLICATION_JSON));
             evicted[0].complete(); // outside compute: completion calls back into remove()
         }
         emitter.onCompletion(() -> remove(userId, emitter));
@@ -90,6 +93,11 @@ public class UserEventStreams implements SmartLifecycle {
             emitter.complete(); // stop() ran meanwhile and did not see this one
         }
         return emitter;
+    }
+
+    /** A new, empty stream. Tests replace it to see what each stream was sent. */
+    SseEmitter newEmitter(long timeoutMillis) {
+        return new SseEmitter(timeoutMillis);
     }
 
     /** Sends an event to every open stream of the user, if any. */
@@ -107,6 +115,18 @@ public class UserEventStreams implements SmartLifecycle {
     public void publishAll(String type) {
         streams.forEach((userId, userStreams) -> userStreams.forEach(emitter ->
                 send(userId, emitter, SseEmitter.event().name(type).data("{}", MediaType.APPLICATION_JSON))));
+    }
+
+    /**
+     * Closes every open stream of the user, with no event: they signed out everywhere. A stream is
+     * authorized only when it opens, so this is what ends it; a browser that reconnects with its
+     * old token is refused.
+     */
+    public void closeAll(long userId) {
+        List<SseEmitter> userStreams = streams.remove(userId);
+        if (userStreams != null) {
+            userStreams.forEach(SseEmitter::complete);
+        }
     }
 
     int openStreams(long userId) {

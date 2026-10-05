@@ -11,11 +11,8 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 
 public interface UserAchievementRepository extends JpaRepository<UserAchievement, Long> {
-    List<UserAchievement> findByUserOrderByUnlockedAtDesc(User user);
-    Optional<UserAchievement> findByUserAndAchievement(User user, Achievement achievement);
     boolean existsByUserAndAchievement(User user, Achievement achievement);
 
     /**

@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * The nightly streak reset running in the middle of a completion (sync mode, where the API computes
+ * The hourly streak reset running in the middle of a completion (sync mode, where the API computes
  * the reward itself). The habit's 1-day streak from two days ago has lapsed, and it is completed
  * today, so it must end with a streak of 1 whichever runs first.
  *
@@ -59,7 +59,7 @@ class CompletionDuringStreakResetIT extends IntegrationTestBase {
             Future<ResponseEntity<JsonNode>> completion = threads.submit(() -> completeHabit(token, habitId));
             await().atMost(Duration.ofSeconds(30)).until(() -> waitingOnALock("%insert into habit_entries%"));
 
-            // The nightly reset for this habit: last completed before yesterday, so its streak goes to 0.
+            // The hourly reset for this habit: last completed before yesterday, so its streak goes to 0.
             // With the fix it waits for the completion's row lock; without it, it commits at once.
             Future<Integer> reset = threads.submit(() -> jdbc.update(
                     "update habit set current_streak = 0 where id = ? and current_streak > 0 and last_completed_date < ?",

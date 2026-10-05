@@ -14,7 +14,10 @@ import static java.lang.annotation.ElementType.PARAMETER;
 import static java.lang.annotation.ElementType.TYPE_USE;
 import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
-/** A region-based IANA time zone id, such as {@code America/Los_Angeles} or {@code UTC}. Null is allowed. */
+/**
+ * A region-based IANA time zone id, such as {@code America/Los_Angeles} or {@code UTC}, that this
+ * database knows too. Null is allowed.
+ */
 @Documented
 @Constraint(validatedBy = TimeZoneIdValidator.class)
 @Target({METHOD, FIELD, ANNOTATION_TYPE, PARAMETER, TYPE_USE})

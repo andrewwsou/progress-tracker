@@ -8,6 +8,7 @@ import org.springframework.test.context.TestPropertySource;
 import tools.jackson.databind.JsonNode;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,6 +44,99 @@ class RequestValidationIT extends IntegrationTestBase {
 
             assertProblem(response, 400);
             assertThat(response.getBody().get("errors").has("goalTargetCount")).isTrue();
+        }
+        assertThat(habitCountFor(email)).isZero();
+    }
+
+    /** A habit counts once a day or once a week, so some goals could never be met. */
+    @Test
+    void aGoalThatCanNeverBeMetIsRejected() {
+        String email = uniqueEmail();
+        String token = registerUser(email);
+
+        List<Map<String, Object>> unreachable = List.of(
+                Map.of("name", "Water", "frequency", "DAILY", "goalPeriod", "DAILY", "goalTargetCount", 3),
+                Map.of("name", "Review", "frequency", "WEEKLY", "goalPeriod", "WEEKLY", "goalTargetCount", 2),
+                Map.of("name", "Review", "frequency", "WEEKLY", "goalPeriod", "DAILY", "goalTargetCount", 1),
+                Map.of("name", "Review", "frequency", "WEEKLY", "goalTargetCount", 2), // period defaults to weekly
+                Map.of("name", "Run", "frequency", "DAILY", "goalPeriod", "WEEKLY", "goalTargetCount", 8));
+        for (Map<String, Object> habit : unreachable) {
+            assertProblem(send(HttpMethod.POST, "/api/habits", token, habit), 400);
+        }
+        assertThat(habitCountFor(email)).isZero();
+
+        // Every goal the form offers is accepted.
+        List<Map<String, Object>> reachable = List.of(
+                Map.of("name", "Read", "frequency", "DAILY", "goalPeriod", "DAILY", "goalTargetCount", 1),
+                Map.of("name", "Run", "frequency", "DAILY", "goalPeriod", "WEEKLY", "goalTargetCount", 1),
+                Map.of("name", "Run", "frequency", "DAILY", "goalPeriod", "WEEKLY", "goalTargetCount", 7),
+                Map.of("name", "Review", "frequency", "WEEKLY", "goalPeriod", "WEEKLY", "goalTargetCount", 1));
+        for (Map<String, Object> habit : reachable) {
+            assertThat(send(HttpMethod.POST, "/api/habits", token, habit).getStatusCode().value()).isEqualTo(201);
+        }
+    }
+
+    @Test
+    void anEditThatWouldMakeTheGoalUnreachableIsRejectedAndChangesNothing() {
+        String token = registerUser(uniqueEmail());
+        long habitId = send(HttpMethod.POST, "/api/habits", token, Map.of(
+                "name", "Run", "frequency", "DAILY", "goalPeriod", "WEEKLY", "goalTargetCount", 3))
+                .getBody().get("id").asLong();
+
+        ResponseEntity<JsonNode> response = send(HttpMethod.PUT, "/api/habits/" + habitId, token, Map.of(
+                "name", "Run", "frequency", "WEEKLY", "goalPeriod", "WEEKLY", "goalTargetCount", 3));
+
+        assertProblem(response, 400);
+        assertThat(jdbc.queryForMap("select frequency, goal_target_count from habit where id = ?", habitId))
+                .containsEntry("frequency", "DAILY").containsEntry("goal_target_count", 3);
+    }
+
+    @Test
+    void changingTheFrequencyWithoutAGoalResetsTheGoal() {
+        String token = registerUser(uniqueEmail());
+        long habitId = send(HttpMethod.POST, "/api/habits", token, Map.of(
+                "name", "Run", "frequency", "DAILY", "goalPeriod", "WEEKLY", "goalTargetCount", 3))
+                .getBody().get("id").asLong();
+
+        ResponseEntity<JsonNode> response = send(HttpMethod.PUT, "/api/habits/" + habitId, token,
+                Map.of("name", "Run", "frequency", "WEEKLY"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody().get("goalPeriod").asString()).isEqualTo("WEEKLY");
+        assertThat(response.getBody().get("goalTargetCount").asInt()).isEqualTo(1);
+    }
+
+    @Test
+    void aHabitSavedWithAnUnreachableGoalBeforeTheRuleStillLoads() {
+        String email = uniqueEmail();
+        String token = registerUser(email);
+        jdbc.update("insert into habit (user_id, name, description, frequency, goal_period, goal_target_count, "
+                + "xp_total, current_streak, longest_streak, created_at) "
+                + "values (?, 'Water', '', 'DAILY', 'DAILY', 3, 0, 0, 0, now())", userIdFor(email));
+
+        ResponseEntity<JsonNode> response = send(HttpMethod.GET, "/api/habits", token, null);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody().get(0).get("goalTargetCount").asInt()).isEqualTo(3);
+    }
+
+    @Test
+    void controlCharactersInANameOrDescriptionAreRejected() {
+        String email = uniqueEmail();
+        String token = registerUser(email);
+
+        // A line feed, a tab, NEL (a C1 control some log viewers break lines on), and LINE SEPARATOR.
+        String[] bad = {"Run\n2026-10-05 ERROR forged log line", "Run\tfast", "Run\u0085fast", "fast\u2028slow"};
+        for (String text : bad) {
+            ResponseEntity<JsonNode> name = send(HttpMethod.POST, "/api/habits", token,
+                    Map.of("name", text, "frequency", "DAILY"));
+            ResponseEntity<JsonNode> description = send(HttpMethod.POST, "/api/habits", token,
+                    Map.of("name", "Run", "description", text, "frequency", "DAILY"));
+
+            assertProblem(name, 400);
+            assertThat(name.getBody().get("errors").has("name")).isTrue();
+            assertProblem(description, 400);
+            assertThat(description.getBody().get("errors").has("description")).isTrue();
         }
         assertThat(habitCountFor(email)).isZero();
     }
@@ -137,6 +231,17 @@ class RequestValidationIT extends IntegrationTestBase {
 
         assertProblem(response, 401);
         assertThat(response.getBody().get("detail").asString()).isEqualTo("Invalid credentials");
+    }
+
+    @Test
+    void signingInWithAnEmailLongerThanAnyAccountCanHaveIsABadRequest() {
+        String tooLong = "a".repeat(244) + "@example.com"; // 256 characters
+
+        ResponseEntity<JsonNode> response = send(HttpMethod.POST, "/api/auth/login", null,
+                Map.of("email", tooLong, "password", "any-password"));
+
+        assertProblem(response, 400);
+        assertThat(response.getBody().get("errors").has("email")).isTrue();
     }
 
     @Test

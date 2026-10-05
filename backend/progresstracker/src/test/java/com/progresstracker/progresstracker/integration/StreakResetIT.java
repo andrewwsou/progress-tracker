@@ -17,7 +17,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The nightly streak reset is a single UPDATE. This checks which rows it touches, and that it
+ * The hourly streak reset is a single UPDATE. This checks which rows it touches, and that it
  * touches nothing but the streak, against a real database.
  */
 @TestPropertySource(properties = "queue.enabled=false")
@@ -118,6 +118,25 @@ class StreakResetIT extends IntegrationTestBase {
 
         assertThat(currentStreak(losAngelesHabit)).isEqualTo(4); // yesterday there was the 14th
         assertThat(currentStreak(kiritimatiHabit)).isZero();      // yesterday there was the 15th
+    }
+
+    /**
+     * The JVM can know zones this database does not (its time zone data can be older). Such a zone
+     * must not fail the one statement that resets everyone: that owner is judged on UTC instead.
+     */
+    @Test
+    void aZoneTheDatabaseDoesNotKnowIsReadAsUtcAndStopsNoOneElsesReset() {
+        LocalDate today = LocalDate.of(2026, 7, 16);
+        long unknownZone = newUserIn("Mars/Olympus_Mons");
+        long unknownZoneAlive = insertHabit(unknownZone, "DAILY", 4, today.minusDays(1));
+        long unknownZoneLapsed = insertHabit(unknownZone, "DAILY", 4, today.minusDays(2));
+        long someoneElsesLapsed = insertHabit(newUserIn("Europe/Berlin"), "DAILY", 4, today.minusDays(2));
+
+        streakResetService.resetBrokenStreaks(noonUtc(today));
+
+        assertThat(currentStreak(unknownZoneAlive)).isEqualTo(4);
+        assertThat(currentStreak(unknownZoneLapsed)).isZero();
+        assertThat(currentStreak(someoneElsesLapsed)).isZero();
     }
 
     private static Instant noonUtc(LocalDate day) {

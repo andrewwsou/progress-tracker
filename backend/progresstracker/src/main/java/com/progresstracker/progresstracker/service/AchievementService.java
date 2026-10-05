@@ -3,7 +3,6 @@ package com.progresstracker.progresstracker.service;
 import com.progresstracker.progresstracker.model.Achievement;
 import com.progresstracker.progresstracker.model.Habit;
 import com.progresstracker.progresstracker.model.User;
-import com.progresstracker.progresstracker.model.UserAchievement;
 import com.progresstracker.progresstracker.repository.AchievementRepository;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
@@ -19,6 +18,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
+/** Unlocks achievements. Their definitions are rows seeded by a migration (V4__seed_achievements.sql). */
 @Service
 public class AchievementService {
 
@@ -47,47 +47,7 @@ public class AchievementService {
     }
 
     @Transactional
-    public void ensureDefaultAchievements() {
-        upsert(FIRST_COMPLETION, "First Step", "Complete a habit for the first time.", 1, "COMPLETION");
-        upsert(STREAK_7, "On a Roll", "Reach a 7-day streak on any habit.", 7, "STREAK");
-        upsert(XP_100, "Level Up", "Earn 100 total XP across all habits.", 100, "XP");
-    }
-
-    private void upsert(String code, String name, String description, int threshold, String type) {
-        Achievement a = achievementRepository.findByCode(code).orElse(null);
-        if (a == null) {
-            achievementRepository.save(new Achievement(code, name, description, threshold, type));
-            return;
-        }
-
-        boolean changed = false;
-
-        if (!name.equals(a.getName())) {
-            a.setName(name);
-            changed = true;
-        }
-        if (!description.equals(a.getDescription())) {
-            a.setDescription(description);
-            changed = true;
-        }
-        if (a.getThreshold() == null || a.getThreshold() != threshold) {
-            a.setThreshold(threshold);
-            changed = true;
-        }
-        if (a.getType() == null || !type.equals(a.getType())) {
-            a.setType(type);
-            changed = true;
-        }
-
-        if (changed) {
-            achievementRepository.save(a);
-        }
-    }
-
-    @Transactional
     public List<Achievement> evaluateAndUnlock(User user, Habit justUpdatedHabit) {
-        ensureDefaultAchievements();
-
         List<Achievement> newlyUnlocked = new ArrayList<>();
 
         Achievement first = achievementRepository.findByCode(FIRST_COMPLETION).orElseThrow();

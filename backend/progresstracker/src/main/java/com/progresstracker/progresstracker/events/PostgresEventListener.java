@@ -20,9 +20,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Listens on the PostgreSQL channel {@value #CHANNEL} and forwards each notification to the
- * user's open event streams. The worker sends a notification inside the transaction that applies
- * a reward (or finishes a weekly summary), and PostgreSQL only delivers it once that transaction
- * commits, so a browser never hears about a change that was rolled back.
+ * user's open event streams. The worker sends a notification just after a reward (or a weekly
+ * summary) has committed, outside that transaction (see the worker's HabitEventNotifier), so a
+ * browser never hears about a change that did not happen. A worker crash between the commit and
+ * the notification loses that one notification. It is only a hint: browsers re-read their state
+ * after their own actions, on reconnect, and on {@code resync}.
  *
  * Uses its own connection, outside the pool: it is held open for as long as the API runs.
  * Every API instance listens, and each forwards only to the streams it holds.
@@ -35,7 +37,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 public class PostgresEventListener implements SmartLifecycle {
 
-    static final String CHANNEL = "habit_events";
+    public static final String CHANNEL = "habit_events";
+
+    /** The notification an API instance sends when a user signs out everywhere. */
+    public static final String SIGNED_OUT = "signedOut";
 
     private static final Logger log = LoggerFactory.getLogger(PostgresEventListener.class);
     private static final int POLL_MILLIS = 5_000;
@@ -98,7 +103,9 @@ public class PostgresEventListener implements SmartLifecycle {
                         nextCheck = System.currentTimeMillis() + CHECK_MILLIS;
                     }
                 }
-            } catch (SQLException e) {
+            } catch (SQLException | RuntimeException e) {
+                // Anything unexpected is retried the same way. Left to escape, it would end this
+                // thread, and streams would go on saying they are live with nobody listening.
                 if (!running.get()) {
                     return;
                 }
@@ -114,21 +121,39 @@ public class PostgresEventListener implements SmartLifecycle {
         }
     }
 
-    private Properties connectionProperties() {
+    Properties connectionProperties() {
         Properties properties = new Properties();
-        properties.setProperty("user", dataSource.determineUsername());
-        properties.setProperty("password", dataSource.determinePassword());
+        // Either can be null (trust or peer authentication), and Properties refuses null values.
+        String user = dataSource.determineUsername();
+        String password = dataSource.determinePassword();
+        if (user != null) {
+            properties.setProperty("user", user);
+        }
+        if (password != null) {
+            properties.setProperty("password", password);
+        }
         properties.setProperty("tcpKeepAlive", "true");
         properties.setProperty("ApplicationName", "progresstracker-event-listener");
         return properties;
     }
 
-    /** Payload: {"type": "reward" | "summary", "userId": 1, ...}. Anything else is ignored. */
-    private void forward(String payload) {
+    /**
+     * Payload: {"type": "reward" | "summary", "userId": 1, ...}, sent on to the user's streams.
+     * {@value #SIGNED_OUT} is internal and never reaches a browser: the API instance where the
+     * user signed out everywhere sends it, and every instance closes that user's streams.
+     * Anything else is ignored.
+     */
+    void forward(String payload) {
         try {
             JsonNode event = jsonMapper.readTree(payload);
             if (event.hasNonNull("type") && event.hasNonNull("userId")) {
-                streams.publish(event.get("userId").asLong(), event.get("type").asString(), payload);
+                long userId = event.get("userId").asLong();
+                String type = event.get("type").asString();
+                if (SIGNED_OUT.equals(type)) {
+                    streams.closeAll(userId);
+                } else {
+                    streams.publish(userId, type, payload);
+                }
             }
         } catch (Exception e) {
             log.warn("Ignoring unreadable {} notification: {}", CHANNEL, payload, e);

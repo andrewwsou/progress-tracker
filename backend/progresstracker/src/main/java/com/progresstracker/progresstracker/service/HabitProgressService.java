@@ -8,6 +8,7 @@ import com.progresstracker.progresstracker.outbox.OutboxEvent;
 import com.progresstracker.progresstracker.outbox.OutboxEventRepository;
 import com.progresstracker.progresstracker.repository.HabitEntryRepository;
 import com.progresstracker.progresstracker.repository.HabitRepository;
+import com.progresstracker.progresstracker.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -20,7 +21,6 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.temporal.TemporalAdjusters;
-import java.time.temporal.WeekFields;
 import java.util.UUID;
 
 @Service
@@ -28,6 +28,7 @@ public class HabitProgressService {
 
     private final HabitRepository habitRepository;
     private final HabitEntryRepository habitEntryRepository;
+    private final UserRepository userRepository;
     private final AchievementService achievementService;
     private final OutboxEventRepository outboxEventRepository;
     private final JsonMapper jsonMapper;
@@ -37,6 +38,7 @@ public class HabitProgressService {
     public HabitProgressService(
             HabitRepository habitRepository,
             HabitEntryRepository habitEntryRepository,
+            UserRepository userRepository,
             AchievementService achievementService,
             OutboxEventRepository outboxEventRepository,
             JsonMapper jsonMapper,
@@ -45,6 +47,7 @@ public class HabitProgressService {
     ) {
         this.habitRepository = habitRepository;
         this.habitEntryRepository = habitEntryRepository;
+        this.userRepository = userRepository;
         this.achievementService = achievementService;
         this.outboxEventRepository = outboxEventRepository;
         this.jsonMapper = jsonMapper;
@@ -54,6 +57,10 @@ public class HabitProgressService {
 
     @Transactional
     public Habit completeToday(Habit habit) {
+        // The user first, then the habit: the worker's lock order, so the two modes cannot deadlock.
+        // With the user locked, one user's completions run one at a time, and each one's achievement
+        // check sees the XP the one before it added.
+        userRepository.lockById(habit.getUser().getId());
         habit = lockAndReload(habit);
         LocalDate today = calendar.today(habit.getUser());
 
@@ -61,14 +68,7 @@ public class HabitProgressService {
             return habit;
         }
 
-        LocalDate last = habit.getLastCompletedDate();
-        int nextStreak;
-
-        if (last == null) {
-            nextStreak = 1;
-        } else {
-            nextStreak = isConsecutivePeriod(habit, last, today) ? habit.getCurrentStreak() + 1 : 1;
-        }
+        int nextStreak = streakEndingToday(habit, today);
 
         habit.setCurrentStreak(nextStreak);
         habit.setLongestStreak(Math.max(habit.getLongestStreak(), nextStreak));
@@ -90,9 +90,26 @@ public class HabitProgressService {
     }
 
     /**
-     * The habit passed in was read before this transaction started, and the nightly streak reset
-     * may have changed it since. Lock its row and read it again, so the new streak is computed from
-     * the row as it is now: a reset that already ran is seen, and one that runs now waits for this
+     * The streak that completing the habit today makes: the run of completed periods (days, or
+     * weeks for a weekly habit) that ends just before today's, plus today's. It is counted from the
+     * completions with the worker's own queries, not from the stored streak, so both modes reward
+     * the same history the same way, also after the habit's frequency was changed.
+     */
+    private int streakEndingToday(Habit habit, LocalDate today) {
+        long earlier;
+        if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
+            LocalDate lastWeekStart = periodStart(habit, today).minusWeeks(1);
+            earlier = habitEntryRepository.weeklyStreakEndingAt(habit.getId(), lastWeekStart, lastWeekStart.plusDays(6));
+        } else {
+            earlier = habitEntryRepository.dailyStreakEndingAt(habit.getId(), today.minusDays(1));
+        }
+        return (int) earlier + 1;
+    }
+
+    /**
+     * The habit passed in was read before this transaction started, and the hourly streak reset
+     * or an edit may have changed it since. Lock its row and read it again, so the reward is applied
+     * to the row as it is now: a reset that already ran is seen, and one that runs now waits for this
      * completion and then finds the streak current. Reading it again also resets what the entity is
      * compared with when it is saved, so the new streak is written even when it equals the old copy's.
      */
@@ -143,25 +160,13 @@ public class HabitProgressService {
      * otherwise move the streak backwards.
      */
     public boolean alreadyCompletedForPeriod(Habit habit, LocalDate today) {
-        LocalDate periodStart = habit.getFrequency() == Habit.Frequency.WEEKLY
+        return habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(habit, periodStart(habit, today));
+    }
+
+    /** The first day of the period containing {@code today}: today itself, or Monday for a weekly habit. */
+    public static LocalDate periodStart(Habit habit, LocalDate today) {
+        return habit.getFrequency() == Habit.Frequency.WEEKLY
                 ? today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
                 : today;
-        return habitEntryRepository.existsByHabitAndCompletedDateGreaterThanEqual(habit, periodStart);
-    }
-
-    private boolean isConsecutivePeriod(Habit habit, LocalDate lastCompleted, LocalDate today) {
-        if (habit.getFrequency() == Habit.Frequency.WEEKLY) {
-            return isSameIsoWeek(lastCompleted, today.minusWeeks(1));
-        }
-        return today.equals(lastCompleted.plusDays(1));
-    }
-
-    private boolean isSameIsoWeek(LocalDate a, LocalDate b) {
-        WeekFields wf = WeekFields.ISO;
-        int wa = a.get(wf.weekOfWeekBasedYear());
-        int ya = a.get(wf.weekBasedYear());
-        int wb = b.get(wf.weekOfWeekBasedYear());
-        int yb = b.get(wf.weekBasedYear());
-        return wa == wb && ya == yb;
     }
 }

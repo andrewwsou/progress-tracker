@@ -20,7 +20,8 @@ import static org.awaitility.Awaitility.await;
 
 /**
  * The live-update stream: a notification on the habit_events channel (what the worker sends when
- * a reward commits) reaches the open stream of that user, and only that user.
+ * a reward commits) reaches the open stream of that user, and only that user. Signing out ends
+ * the user's open streams.
  */
 class EventStreamIT extends IntegrationTestBase {
 
@@ -61,6 +62,49 @@ class EventStreamIT extends IntegrationTestBase {
 
             assertThat(lines).anyMatch(l -> l.startsWith("data:") && l.contains("\"userId\":" + userId));
             assertThat(lines).noneMatch(l -> l.contains("\"userId\":" + otherUserId));
+        } finally {
+            open.forEach(f -> f.cancel(true));
+        }
+    }
+
+    @Test
+    void signingOutEndsTheUsersOpenStreams() {
+        String token = registerUser(uniqueEmail());
+        List<CompletableFuture<?>> open = new ArrayList<>();
+        try {
+            List<String> lines = openStream(token, open);
+            await().atMost(Duration.ofSeconds(10)).until(() -> lines.contains("event:ready"));
+
+            assertThat(send(HttpMethod.POST, "/api/auth/logout", token, null).getStatusCode().value()).isEqualTo(204);
+
+            // Ended by the server at once, not left open until it times out, and not reopened.
+            await().atMost(Duration.ofSeconds(10)).until(() -> open.get(0).isDone());
+            assertThat(lines).noneMatch(l -> l.contains("signedOut"));
+            assertThat(send(HttpMethod.GET, "/api/events", token, null).getStatusCode().value()).isEqualTo(401);
+        } finally {
+            open.forEach(f -> f.cancel(true));
+        }
+    }
+
+    @Test
+    void aSignOutOnAnotherInstanceEndsTheStreamsHereToo() {
+        String email = uniqueEmail();
+        String token = registerUser(email);
+        long userId = userIdFor(email);
+        List<CompletableFuture<?>> open = new ArrayList<>();
+        try {
+            List<String> lines = openStream(token, open);
+            await().atMost(Duration.ofSeconds(10)).until(() -> lines.contains("event:ready"));
+
+            // What the instance that handled the sign-out sends. The listener connects in the
+            // background, so keep sending until it hears one.
+            await().atMost(Duration.ofSeconds(20)).pollInterval(Duration.ofMillis(300)).until(() -> {
+                jdbc.queryForList("select pg_notify('habit_events', ?)",
+                        "{\"type\":\"signedOut\",\"userId\":" + userId + "}");
+                return open.get(0).isDone();
+            });
+
+            assertThat(lines).noneMatch(l -> l.contains("signedOut"));
         } finally {
             open.forEach(f -> f.cancel(true));
         }

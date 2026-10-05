@@ -16,6 +16,8 @@ public class JwtService {
     // HS256 needs a key of at least 256 bits.
     private static final int MIN_SECRET_BYTES = 32;
 
+    private static final String VERSION_CLAIM = "ver";
+
     private final SecretKey key;
     private final long expirationMs = 1000L * 60 * 60 * 24;
 
@@ -29,7 +31,11 @@ public class JwtService {
         this.key = Keys.hmacShaKeyFor(secretBytes);
     }
 
-    public String generateToken(String email) {
+    /**
+     * @param tokenVersion the user's current token version; the token stops working once signing
+     *                     out everywhere raises it
+     */
+    public String generateToken(String email, int tokenVersion) {
         Date now = new Date();
         Date exp = new Date(now.getTime() + expirationMs);
 
@@ -37,6 +43,7 @@ public class JwtService {
         // allows, and a 64-byte secret would silently switch every new token to HS512.
         return Jwts.builder()
                 .subject(email)
+                .claim(VERSION_CLAIM, tokenVersion)
                 .issuedAt(now)
                 .expiration(exp)
                 .signWith(key, Jwts.SIG.HS256)
@@ -45,6 +52,12 @@ public class JwtService {
 
     public String extractEmail(String token) {
         return parseClaims(token).getSubject();
+    }
+
+    /** The user's token version when the token was issued. A token from before versions existed has none: 0. */
+    public int extractVersion(String token) {
+        Integer version = parseClaims(token).get(VERSION_CLAIM, Integer.class);
+        return version == null ? 0 : version;
     }
 
     public boolean isValid(String token) {

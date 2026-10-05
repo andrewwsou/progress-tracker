@@ -11,6 +11,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -48,6 +49,23 @@ class OpenApiContractIT extends IntegrationTestBase {
         assertThat(spec.get("paths").propertyNames())
                 .noneMatch(path -> path.startsWith("/api/internal"));
         assertThat(rest.getForEntity("/swagger-ui/index.html", String.class).getStatusCode().value()).isEqualTo(200);
+    }
+
+    /**
+     * A JSON Schema pattern passes if it matches anywhere in the value, unlike {@code @Pattern},
+     * which must match all of it. A client that checks a habit's text with the published pattern
+     * has to reach the same answer as the server.
+     */
+    @Test
+    void theSingleLinePatternsRefuseALineBreakWhenUsedAsJsonSchemaPatterns() {
+        JsonNode habitRequest = rest.getForObject("/v3/api-docs", JsonNode.class)
+                .get("components").get("schemas").get("HabitRequest").get("properties");
+
+        for (String field : new String[]{"name", "description"}) {
+            Pattern published = Pattern.compile(habitRequest.get(field).get("pattern").asString());
+            assertThat(published.matcher("Run 5k").find()).as(field).isTrue();
+            assertThat(published.matcher("Run\nforged line").find()).as(field).isFalse();
+        }
     }
 
     /** Same input always renders to the same text: sorted keys, two-space indent, LF line endings. */

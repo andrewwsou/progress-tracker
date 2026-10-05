@@ -6,6 +6,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -60,7 +62,10 @@ public class AutomationController {
     }
 
     private void requireValidToken(String token) {
-        if (internalToken == null || internalToken.isBlank() || !internalToken.equals(token)) {
+        // Compared in constant time, so how long a wrong guess takes says nothing about how close it was.
+        if (internalToken == null || internalToken.isBlank() || token == null
+                || !MessageDigest.isEqual(internalToken.getBytes(StandardCharsets.UTF_8),
+                                          token.getBytes(StandardCharsets.UTF_8))) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or missing internal token");
         }
     }

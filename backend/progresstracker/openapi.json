@@ -17,6 +17,7 @@
           "description" : {
             "maxLength" : 255,
             "minLength" : 0,
+            "pattern" : "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$",
             "type" : "string"
           },
           "frequency" : {
@@ -35,13 +36,14 @@
           },
           "goalTargetCount" : {
             "format" : "int32",
-            "maximum" : 365,
+            "maximum" : 7,
             "minimum" : 1,
             "type" : "integer"
           },
           "name" : {
             "maxLength" : 100,
             "minLength" : 1,
+            "pattern" : "^[^\\x00-\\x1F\\x7F-\\x9F\\u2028\\u2029]*$",
             "type" : "string"
           }
         },
@@ -133,6 +135,7 @@
       "LoginRequest" : {
         "properties" : {
           "email" : {
+            "maxLength" : 255,
             "minLength" : 1,
             "type" : "string"
           },
@@ -417,9 +420,58 @@
               }
             },
             "description" : "Invalid credentials"
+          },
+          "429" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Too many failed sign-ins for this email or from this address",
+            "headers" : {
+              "Retry-After" : {
+                "description" : "Seconds to wait before trying again",
+                "schema" : {
+                  "type" : "integer"
+                },
+                "style" : "simple"
+              }
+            }
           }
         },
         "security" : [ ],
+        "tags" : [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/auth/logout" : {
+      "post" : {
+        "description" : "Ends every session the caller has, on every device: every token issued to them before this call stops working. Sign in again for a new one.",
+        "operationId" : "logout",
+        "responses" : {
+          "204" : {
+            "description" : "Signed out"
+          },
+          "401" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "Missing or invalid bearer token"
+          }
+        },
+        "security" : [
+          {
+            "bearerAuth" : [ ]
+          }
+        ],
+        "summary" : "Sign out everywhere",
         "tags" : [
           "Authentication"
         ]
@@ -478,7 +530,7 @@
     },
     "/api/events" : {
       "get" : {
-        "description" : "A server-sent event stream. The first event is `ready`; after that, `reward` when the worker has applied a completion's reward and `summary` when a weekly summary is written. Each event's data is a small JSON object; read the new state through the other endpoints.",
+        "description" : "A server-sent event stream. Each event's data is a small JSON object; events only say that something changed, so read the new state through the other endpoints. The events: `ready` first, once the stream is live; `reward` when the worker has applied a completion's reward; `summary` when a weekly summary is written; `resync` when events may have been missed (the server's database listener reconnected), so re-read everything; `evicted` just before the server closes this stream because the user opened more streams than it keeps (it closes the oldest), so do not reconnect until the page is in use again.",
         "operationId" : "events",
         "responses" : {
           "200" : {
@@ -582,6 +634,16 @@
               }
             },
             "description" : "Missing or invalid bearer token"
+          },
+          "409" : {
+            "content" : {
+              "application/problem+json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/ProblemDetail"
+                }
+              }
+            },
+            "description" : "The caller already has the most habits allowed"
           }
         },
         "tags" : [

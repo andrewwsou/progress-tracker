@@ -3,6 +3,9 @@ package com.progresstracker.progresstracker.web;
 import org.hibernate.exception.ConstraintViolationException;
 import org.hibernate.exception.DataException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -12,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.sql.SQLException;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -20,6 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** The error paths that are hard to reach through the real API: database refusals and unexpected failures. */
+@ExtendWith(OutputCaptureExtension.class)
 class ApiExceptionHandlerTest {
 
     private final MockMvc mvc = MockMvcBuilders
@@ -47,6 +52,14 @@ class ApiExceptionHandlerTest {
     }
 
     @Test
+    void aBrokenConstraintIsLoggedByNameWithoutTheRowsValues(CapturedOutput output) throws Exception {
+        mvc.perform(get("/constraint")).andExpect(status().isConflict());
+
+        // The driver's message names the email address; the constraint's name is enough to debug with.
+        assertThat(output).contains("constraint uk_email").doesNotContain("a@b.c");
+    }
+
+    @Test
     void dataTheDatabaseCannotStoreIsA400() throws Exception {
         mvc.perform(get("/bad-data"))
                 .andExpect(status().isBadRequest())
@@ -65,7 +78,10 @@ class ApiExceptionHandlerTest {
         @GetMapping("/constraint")
         String constraint() {
             throw new DataIntegrityViolationException("could not execute statement",
-                    new ConstraintViolationException("duplicate key (email)=(a@b.c)", new SQLException(), "uk_email"));
+                    new ConstraintViolationException("duplicate key (email)=(a@b.c)",
+                            new SQLException("duplicate key value violates unique constraint \"uk_email\": "
+                                    + "Key (email)=(a@b.c) already exists."),
+                            "uk_email"));
         }
 
         @GetMapping("/bad-data")

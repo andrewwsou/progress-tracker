@@ -3,8 +3,10 @@ package com.progresstracker.progresstracker.config;
 import jakarta.servlet.DispatcherType;
 import com.progresstracker.progresstracker.security.BearerAuthenticationEntryPoint;
 import com.progresstracker.progresstracker.security.JwtAuthFilter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -23,10 +25,16 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final BearerAuthenticationEntryPoint authenticationEntryPoint;
+    private final List<String> allowedOrigins;
 
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter, BearerAuthenticationEntryPoint authenticationEntryPoint) {
+    public SecurityConfig(JwtAuthFilter jwtAuthFilter,
+                          BearerAuthenticationEntryPoint authenticationEntryPoint,
+                          // The only place browser origins are allowed: no controller adds its own.
+                          @Value("${app.cors.allowed-origins:http://localhost:5173,http://localhost:4173}")
+                          List<String> allowedOrigins) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.authenticationEntryPoint = authenticationEntryPoint;
+        this.allowedOrigins = allowedOrigins;
     }
 
     @Bean
@@ -44,6 +52,8 @@ public class SecurityConfig {
                         // filter does not run again for it.
                         .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        // Signing out acts on the caller's account, so it needs a token, unlike the rest of /api/auth.
+                        .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
                         .requestMatchers("/api/auth/**").permitAll()
                         // Liveness probe for containers and load balancers. Exposes status only.
                         .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
@@ -65,9 +75,11 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173"));
+        configuration.setAllowedOrigins(allowedOrigins);
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        // So the sign-in page can read how long a throttled sign-in has to wait.
+        configuration.setExposedHeaders(List.of(HttpHeaders.RETRY_AFTER));
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

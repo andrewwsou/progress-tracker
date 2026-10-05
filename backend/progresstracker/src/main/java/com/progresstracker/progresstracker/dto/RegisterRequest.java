@@ -5,6 +5,8 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
+import java.util.Locale;
+
 public record RegisterRequest(
         @NotBlank @Email @Size(min = 1, max = 255) String email,
         // bcrypt refuses anything over 72 bytes, and a non-ASCII character is more than one byte,
@@ -18,4 +20,14 @@ public record RegisterRequest(
         @Size(max = 64)
         String timeZone
 ) {
+
+    /**
+     * One account per mailbox, however the address is capitalised: it is stored in lower case and
+     * looked up that way. Done here, before validation, so every check sees the stored form.
+     */
+    public RegisterRequest {
+        if (email != null) {
+            email = email.strip().toLowerCase(Locale.ROOT);
+        }
+    }
 }

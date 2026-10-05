@@ -15,6 +15,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
@@ -50,8 +51,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String email = jwtService.extractEmail(token);
 
-        User user = userRepository.findByEmail(email).orElse(null);
-        if (user == null) {
+        // Emails are stored in lower case. A token issued before that (V3) carries the address
+        // as it was typed, and must still find its user. So when two accounts that differ only in
+        // case are merged by hand for V3, the removed account's tokens find the kept one: raise the
+        // kept account's token_version after migrating, or rotate JWT_SECRET.
+        User user = email == null ? null : userRepository.findByEmail(email.toLowerCase(Locale.ROOT)).orElse(null);
+        // A token issued before the user signed out everywhere carries an older version.
+        if (user == null || user.getTokenVersion() != jwtService.extractVersion(token)) {
             filterChain.doFilter(request, response);
             return;
         }

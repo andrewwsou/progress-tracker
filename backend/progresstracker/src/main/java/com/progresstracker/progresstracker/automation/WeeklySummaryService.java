@@ -13,8 +13,9 @@ import java.time.temporal.TemporalAdjusters;
 /**
  * Asks for each active user's weekly summary. Meant to run on a weekly schedule
  * (EventBridge -> Lambda -> this endpoint). It only records the requests; the worker writes the
- * summaries, with Claude when an API key is configured and from a template otherwise, so a slow
- * model call never holds up this request.
+ * summaries, so a slow model call never holds up this request. Claude writes them only when
+ * SUMMARY_LLM_ENABLED=true, an API key is set and the model is on the worker's allow-list; a
+ * template writes them otherwise.
  */
 @Service
 public class WeeklySummaryService {

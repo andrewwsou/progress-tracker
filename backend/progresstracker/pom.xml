@@ -24,7 +24,7 @@
         <jacoco.version>0.8.15</jacoco.version>
         <springdoc.version>3.1.1</springdoc.version>
         <!-- Coverage ratchet: `verify` fails if line coverage drops below this. Raise it, never lower it. -->
-        <coverage.minimum>0.82</coverage.minimum>
+        <coverage.minimum>0.88</coverage.minimum>
     </properties>
 
     <dependencies>

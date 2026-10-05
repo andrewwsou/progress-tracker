@@ -32,15 +32,37 @@ class JwtServiceTest {
     void issuedTokenRoundTripsTheEmail() {
         JwtService jwt = new JwtService(SECRET);
 
-        String token = jwt.generateToken("user@example.com");
+        String token = jwt.generateToken("user@example.com", 0);
 
         assertTrue(jwt.isValid(token));
         assertEquals("user@example.com", jwt.extractEmail(token));
     }
 
     @Test
+    void issuedTokenCarriesTheUsersTokenVersion() {
+        JwtService jwt = new JwtService(SECRET);
+
+        assertEquals(3, jwt.extractVersion(jwt.generateToken("user@example.com", 3)));
+    }
+
+    @Test
+    void aTokenFromBeforeVersionsExistedIsVersionZero() {
+        // Issued before tokens carried a version: still valid, and read as the version every user started at.
+        String unversioned = Jwts.builder()
+                .subject("user@example.com")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 60_000))
+                .signWith(Keys.hmacShaKeyFor(SECRET.getBytes(StandardCharsets.UTF_8)), Jwts.SIG.HS256)
+                .compact();
+
+        JwtService jwt = new JwtService(SECRET);
+        assertTrue(jwt.isValid(unversioned));
+        assertEquals(0, jwt.extractVersion(unversioned));
+    }
+
+    @Test
     void rejectsTokenSignedWithADifferentSecret() {
-        String foreignToken = new JwtService(OTHER_SECRET).generateToken("user@example.com");
+        String foreignToken = new JwtService(OTHER_SECRET).generateToken("user@example.com", 0);
 
         assertFalse(new JwtService(SECRET).isValid(foreignToken));
     }
@@ -66,7 +88,7 @@ class JwtServiceTest {
     @Test
     void signsWithHs256WhateverTheSecretLength() {
         // A 64-byte secret would let jjwt choose HS512 if the algorithm were not named.
-        String token = new JwtService("x".repeat(64)).generateToken("user@example.com");
+        String token = new JwtService("x".repeat(64)).generateToken("user@example.com", 0);
 
         String header = new String(java.util.Base64.getUrlDecoder().decode(token.split("\\.")[0]), StandardCharsets.UTF_8);
         assertTrue(header.contains("\"alg\":\"HS256\""));

@@ -53,8 +53,10 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     ProblemDetail handleDataIntegrityViolation(DataIntegrityViolationException ex) {
-        if (ex.getCause() instanceof ConstraintViolationException) {
-            log.warn("Request conflicted with existing data: {}", ex.getMostSpecificCause().getMessage());
+        if (ex.getCause() instanceof ConstraintViolationException violation) {
+            // The constraint's name, not the driver's message: that repeats the clashing values,
+            // such as the email address of a sign-up.
+            log.warn("Request conflicted with existing data: constraint {}", violation.getConstraintName());
             return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, "The request conflicts with existing data.");
         }
         log.warn("Request contained data the database rejected: {}", ex.getMostSpecificCause().getMessage());

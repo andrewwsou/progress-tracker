@@ -22,6 +22,14 @@ public class User {
     @Column(name = "time_zone", nullable = false, length = 64)
     private String timeZone = "UTC";
 
+    /**
+     * Carried in every token issued to the user; a token with an older version is refused. Only
+     * ever raised by one UPDATE (see UserRepository), never written from the entity, so saving a
+     * copy loaded earlier cannot put back a version that signing out replaced.
+     */
+    @Column(name = "token_version", nullable = false, updatable = false)
+    private int tokenVersion;
+
     public User() {}
 
     public User(String email, String passwordHash) {
@@ -59,6 +67,10 @@ public class User {
 
     public void setTimeZone(String timeZone) {
         this.timeZone = timeZone;
+    }
+
+    public int getTokenVersion() {
+        return tokenVersion;
     }
 
     public ZoneId zone() {
