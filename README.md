@@ -6,7 +6,8 @@
 A habit tracker with streaks, XP, achievements, and weekly summaries, built to show how an
 event-driven backend stays correct under load. Completing a habit is recorded in the request;
 the reward is applied by a separate worker through a queue, exactly once, even when a message is
-delivered twice, out of order, or after the worker crashes.
+delivered twice, out of order, or after the worker crashes. Built with Java 17, Spring Boot,
+PostgreSQL, SQS, React with TypeScript, and Terraform; the backend runs locally in Docker Compose.
 
 ![The ProgressArc dashboard: habits with streaks and XP, an overview, the weekly summary, and achievements](docs/dashboard.png)
 
@@ -23,8 +24,12 @@ delivered twice, out of order, or after the worker crashes.
   at once, all succeeded, with one completion and one reward recorded.
 - **Measured, then optimised.** A k6 harness checks the database after every run. It led to a
   window-function streak query and fewer achievement queries (77.6 ms to 6.0 ms per reward for a
-  365-day streak), a set-based streak-reset job (5.1 s to 0.2 s over 20,000 habits), and a concurrent
-  worker with backpressure (242 to 650 events/s).
+  365-day streak), a single-`UPDATE` streak reset (5.1 s to 0.2 s over 20,000 habits), and a
+  concurrent worker with backpressure (204 to 685 events/s, one thread versus eight).
+- **Hardened sign-in and access.** Failed sign-ins are throttled per email and per client address
+  (`429` with `Retry-After`), so guessing from one address cannot lock the owner out from another.
+  Signing out revokes every token the user holds, and users cannot see or change each other's
+  habits or set their own XP.
 - **Operable.** Graceful shutdown, health checks, Prometheus metrics, dead-letter queue alarms
   defined in Terraform, and Flyway migrations that both services validate against at startup.
 - **An LLM feature with guardrails.** Weekly summaries written through the Claude API with
@@ -35,7 +40,7 @@ delivered twice, out of order, or after the worker crashes.
   SQS-compatible broker) at 86 to 90% line coverage behind coverage gates, 60 frontend tests, an
   OpenAPI contract check, an end-to-end Docker Compose run, CodeQL, and Dependabot.
 
-Every load-test number above comes from a script in this repository; see [load/RESULTS.md](load/RESULTS.md).
+Every load-test number above comes from a script in this repository, run on one laptop; see [load/RESULTS.md](load/RESULTS.md).
 
 ## Architecture
 
@@ -55,7 +60,8 @@ flowchart LR
 The API never waits for the reward or for the queue: a completion and its event are written in
 one transaction and the request returns. A relay publishes the event, and the worker computes
 the streak, XP, and achievements. The API can also run fully synchronously, with no queue or AWS
-at all, which is the default for local development.
+at all. That is its default when it runs on its own (see Running locally); the Docker Compose
+stack runs async.
 
 | Part | Path | Stack |
 |---|---|---|
@@ -132,7 +138,7 @@ allowed to call the API come from
 
 `POST /api/habits/{id}/complete` behaves differently depending on `queue.enabled`:
 
-- **`queue.enabled=false`** (default local dev): streak, XP, and achievement unlocks are computed
+- **`queue.enabled=false`** (the default outside Docker Compose): streak, XP, and achievement unlocks are computed
   inline and returned in the response. The API takes the same locks in the same order as the
   worker (the user's row, then the habit's) and counts the streak from the completion history
   with the worker's queries, so both modes give the same streak, XP, and achievements.
@@ -193,10 +199,9 @@ accepted only if both Java and PostgreSQL know it, since the reset below runs in
 stored zone PostgreSQL no longer knows is judged on UTC rather than failing the reset for
 everyone. The API works out "today" from one injectable `Clock` and that zone
 ([`UserCalendar`](backend/progresstracker/src/main/java/com/progresstracker/progresstracker/service/UserCalendar.java)).
-The streak reset stays one `UPDATE` and lets PostgreSQL compute every owner's local date
-(`now AT TIME ZONE u.time_zone`), so it now runs hourly and reaches each zone within an hour of its
-midnight. The column came in as the second Flyway migration; existing users kept UTC, which is
-what the server had used for them. A completion keeps the date it had in the zone where it was made. So after
+The streak reset stays one `UPDATE` in which PostgreSQL computes every owner's local date
+(`now AT TIME ZONE u.time_zone`), and it runs hourly, so it reaches each zone within an hour of
+its midnight. A completion keeps the date it had in the zone where it was made. So after
 moving west, a habit can already be done "tomorrow" (it counts as done, and its streak never moves
 backwards); after moving east, a streak kept every day can lose one day.
 
@@ -241,15 +246,11 @@ otherwise wait out its timeout for streams that never end.
   again, so that is how long the worker can be down before rewards are lost. The alarms notify
   the SNS topic in `alarm_topic_arn`; left blank, they only show in CloudWatch, so a real
   deployment must set it.
-- The sync path (`HabitController`) had its own concurrency edge case: two requests completing the
-  same habit at once could both pass the "already completed?" check before either committed, so
-  the loser hit the DB's `(habit_id, completed_date)` unique constraint and failed with a 500.
-  Found via a concurrent load test (50 parallel requests against one habit; some failed before the
-  fix), fixed by treating that constraint violation as "lost the race, return current state"
-  instead of an error. Since the streak-reset fix, the sync path locks the user's row and then the
-  habit's before it checks, so completions of one habit (indeed of one user) take turns there.
-  The worker takes its locks in the same order, user then habit, so the two modes cannot
-  deadlock. The fallback still matters on the async path, which takes no lock. It is covered by
+- **Racing completions on the API side.** In async mode, two requests completing the same habit at
+  once can both pass the "already completed?" check; the loser hits the `(habit_id, completed_date)`
+  unique constraint, and `HabitController` returns the current state instead of an error. In sync
+  mode the user's row lock and then the habit's (the worker's order, so the two modes cannot
+  deadlock) make such requests take turns. Covered by
   [`HabitControllerTest`](backend/progresstracker/src/test/java/com/progresstracker/progresstracker/controller/HabitControllerTest.java)
   (unit) and `CompletionOutboxIT` (real database, async); under the load harness, 8,000 requests
   against one habit all succeed in both modes ([load/RESULTS.md](load/RESULTS.md) section 1).
@@ -324,7 +325,7 @@ Since then: V2 adds each user's time zone, V3 stores emails in lower case behind
 insert them), V5 adds the token version that signing out raises, and V6 indexes
 `processed_events.processed_at` for the worker's purge. V3 stops with a clear message if two
 existing accounts differ only in case (possible before it, since sign-up compared emails
-exactly); merge them by hand, and after a merge raise the kept account's `token_version` so a
+exactly); merge them by hand, and after migrating raise the kept account's `token_version` so a
 token of the removed one cannot sign in to it. Tokens issued before V3 keep working: the API
 looks their subject up in lower case.
 
@@ -340,10 +341,15 @@ Run from the repository root:
 # Unit + integration tests + coverage gate: needs Docker running
 (cd backend/progresstracker && ./mvnw clean verify)
 (cd backend/progress-worker && ../progresstracker/mvnw clean verify)
+
+# Frontend (Vitest, no server needed) and the Lambda handlers (Python 3, stdlib only)
+(cd frontend && npm install && npm test)
+python3 -m unittest discover -s infra/lambda -p "test_*.py"
 ```
 
 **Unit tests** (`*Test`, Mockito) cover streak/XP calculation, goal-period no-ops, JWT handling,
-the scheduled automations, and idempotent message processing. `SqsPollerTest` runs the poller
+the sign-in throttle, the outbox relay, the event streams, and idempotent message processing.
+`SqsPollerTest` runs the poller
 against a fake queue: it never holds more messages than idle threads, a stop lets the messages in
 flight finish before the client closes, a message still running at the deadline is left for
 redelivery, and failed polls back off.
@@ -426,9 +432,8 @@ were measured on, are in [`load/RESULTS.md`](load/RESULTS.md). On one laptop:
 
 ## Weekly summaries (Claude)
 
-Every week each active user gets a short summary of their week, written by Claude and shown at
-the top of the app. The worker also records an email notice for it (a log line; no mail provider
-is connected yet).
+Every week each active user gets a short summary of their week in the dashboard's side panel,
+written by Claude when it is switched on, and by a template when it is off or anything fails.
 
 ```
  EventBridge (weekly) -> Lambda -> POST /api/internal/automations/weekly-summary
@@ -487,8 +492,10 @@ so a slow model call never delays the queue poller that applies rewards.
 
 **Running it.** Set both `SUMMARY_LLM_ENABLED=true` and `ANTHROPIC_API_KEY` for the worker (see
 `.env.example`); otherwise every summary comes from the template and nothing is sent. The model
-is `claude-opus-5-5` by default (`SUMMARY_LLM_MODEL=claude-sonnet-5-5` is cheaper). Locally, the smoke test asks for this week's summaries; you can too. A week is
-summarized once, so a summary of the current week covers only the days so far:
+is `claude-opus-5-5` by default (`SUMMARY_LLM_MODEL=claude-sonnet-5-5` is cheaper). The smoke test
+asks for this week's summaries, and you can too. The token below is the Compose stack's
+placeholder; an API started with `./mvnw` answers `401` unless `AUTOMATION_TOKEN` was set to the
+same value. A week is summarized once, so a summary of the current week covers only the days so far:
 
 ```
 curl -X POST -H "X-Internal-Token: local-development-only-token" \
@@ -497,9 +504,7 @@ curl -X POST -H "X-Internal-Token: local-development-only-token" \
 
 **Tests** run without a key: unit tests cover the validator, the template, and every branch of
 the AI-or-template decision, and `WeeklySummaryJobIT` runs the real Claude SDK against WireMock
-for success, timeout, retry (turned on for the test; off in production), server errors,
-refusals, fallback token counts, invented output, the budget, a backlog, and claims (leases,
-renewal, fencing, two workers at once).
+(see its row in the integration-test table above).
 
 ## Scheduled automations (infra/)
 
