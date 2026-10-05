@@ -1,7 +1,8 @@
 """Weekly EventBridge target: tells the API to request last week's summary
 for every user who completed a habit. The worker then writes each summary
-(with Claude when an API key is configured, from a template otherwise) and
-queues the email. Same stdlib-only, HTTP-call-out design as daily_streak_reset.
+(with Claude only when SUMMARY_LLM_ENABLED=true and ANTHROPIC_API_KEY are both
+set, from a template otherwise) and records an email notice (a log line; no mail
+provider is connected yet). Same stdlib-only, HTTP-call-out design as daily_streak_reset.
 """
 import os
 import urllib.error

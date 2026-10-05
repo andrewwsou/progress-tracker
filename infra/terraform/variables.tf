@@ -19,6 +19,11 @@ variable "automation_token" {
   description = "Shared secret sent as X-Internal-Token by the scheduled Lambdas. Must match automation.internal-token / AUTOMATION_TOKEN on the API."
   type        = string
   sensitive   = true
+
+  validation {
+    condition     = length(var.automation_token) >= 32 && var.automation_token != "CHANGE_ME"
+    error_message = "automation_token must be a random value of at least 32 characters (for example: openssl rand -base64 48), not the example placeholder."
+  }
 }
 
 variable "streak_reset_schedule" {
@@ -34,7 +39,7 @@ variable "weekly_summary_schedule" {
 }
 
 variable "alarm_topic_arn" {
-  description = "SNS topic to notify when a queue alarm fires. Blank: the alarms still show in CloudWatch but notify no one."
+  description = "SNS topic to notify when a queue or scheduled-job alarm fires. Blank: the alarms still show in CloudWatch but notify no one, so a real deployment must set it."
   type        = string
   default     = ""
 }

@@ -1,6 +1,14 @@
 # Load test results
 
-Recorded on 2026-10-04 with `./load/run.sh` (see [README.md](README.md) for what each scenario
+**Which code these numbers describe.** All of them were recorded on 2026-10-04, on the code as of
+commit `fd345c8` or earlier: sections 1 to 5 were committed in `2f268be`, section 6 and the repeat
+in section 5 in `2046f9e`, the re-run in section 1 in `d461975`, and section 7 in `fd345c8`. Since
+then the streak-reset statement has changed (it now joins `app_user` to judge each habit on its
+owner's time zone), a synchronous completion locks the user's row before the habit's, and both
+services have moved to Spring Boot 4.1. Section 8 re-measures the `reset` and `drain` scenarios
+on that code.
+
+Recorded with `./load/run.sh` (see [README.md](README.md) for what each scenario
 does). Every run below passed all of its k6 thresholds and database checks.
 
 **Machine.** One laptop running everything: Apple M1 Pro (8 cores), Docker Desktop with 8 CPUs
@@ -91,9 +99,11 @@ Two things changed:
   definitions are read once and kept in memory, what the user has unlocked is read in one
   query, and the remaining queries only run for achievements that are still locked.
 
-## 4. Nightly streak reset (optimised in this change)
+## 4. Streak reset (optimised in this change)
 
 The job that zeroes streaks nobody kept up, over 20,000 habits whose streaks had all lapsed.
+Measured at `2f268be`, on the single-table `UPDATE` of that time. The version that joins
+`app_user` for each owner's time zone is timed in section 8: 0.19 s.
 
 | | Before | After |
 |---|---:|---:|
@@ -144,7 +154,7 @@ warms up or slows down affects both sides equally.
 | 3 | 241 events/s | 650 events/s |
 | **Median** | **242 events/s** (6,001 in 24.8 s) | **650 events/s** (6,001 in 9.2 s) |
 
-**About 2.7 times faster** (2.2 to 2.8 times run for run). Every run passed every database check
+**About 2.7 times faster** (2.4 to 2.7 times run for run). Every run passed every database check
 (each completion rewarded exactly once), and the worker's own metrics showed no request waiting
 for a database connection (`hikaricp_connections_timeout_total` 0, pending 0) and no failed event.
 
@@ -173,6 +183,34 @@ the threads' commits wait for each other. C is within run-to-run noise of A, so 
 version costs nothing measurable. All three builds passed every database check. These runs are
 slower than section 6 across the board (the machine was busier); compare them with each other,
 not with the earlier table.
+
+## 8. Re-measured on the current code
+
+The same scenarios on the code after the per-user time zones, the Spring Boot 4.1 upgrade and the
+audit fixes (the user's row locked before the habit's, the 100-habit limit per account), recorded
+on 2026-10-05 on the same machine, with the local development stack stopped.
+
+**Streak reset** (`./load/run.sh reset`, three runs): 0.189 s, 0.185 s and 0.166 s over 20,000
+lapsed habits, median **0.19 s**, all 20,000 reset. Joining `app_user` to judge each habit on its
+owner's local date costs nothing measurable next to section 4's 0.20 s.
+
+**Worker throughput** (`RATE=100 DURATION=60 USERS=50 ./load/run.sh drain`): the same worker build
+with one thread and with eight, alternated three times. A run now needs 6,310 habits, more than 50
+accounts may hold under the 100-habit limit, so the script spread them over 64 users.
+
+| Round | 1 thread | 8 threads |
+|---|---:|---:|
+| 1 | 204.6 events/s | 661.8 events/s |
+| 2 | 204.2 events/s | 687.3 events/s |
+| 3 | 202.4 events/s | 685.0 events/s |
+| **Median** | **204 events/s** (6,001 in 29.4 s) | **685 events/s** (6,001 in 8.8 s) |
+
+**About 3.4 times faster with eight threads** (3.2 to 3.4 run for run). Section 6 compared the old
+single-threaded worker with the new one; this compares one build with itself, so the gain is the
+threads alone. Its one-thread figure matches section 6's single run of the new worker with one
+thread (201 events/s), and eight threads are slightly faster than section 6's 650. Every run
+passed every database check (each completion rewarded exactly once, one event per completion,
+every event handled), and the API side of each run had no failed or dropped request.
 
 ## What I would look at next
 

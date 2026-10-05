@@ -16,10 +16,11 @@ const REQUESTS = Number(__ENV.REQUESTS || 8000);
 const VUS = Number(__ENV.VUS || 200);
 
 // throughput: RATE completions per second for DURATION seconds, each of a different habit,
-// spread over USERS users.
+// spread over USERS users (more when that would need over MAX_HABITS_PER_USER habits each).
 const RATE = Number(__ENV.RATE || 100);
 const DURATION = Number(__ENV.DURATION || 30);
 const USERS = Number(__ENV.USERS || 50);
+const MAX_HABITS_PER_USER = 100; // the API's limit (HabitController)
 const P95_LIMIT_MS = Number(__ENV.P95_LIMIT_MS || 200);
 
 // Time for the completion request only, without the setup calls.
@@ -118,10 +119,14 @@ export function setup() {
   }
 
   // A few more habits than requests, so every request completes a habit nobody has completed yet.
-  const habitsPerUser = Math.ceil((RATE * DURATION * 1.05 + 10) / USERS);
+  // The API allows at most MAX_HABITS_PER_USER habits per account, so a long run adds users
+  // instead of giving each one more habits.
+  const totalHabits = RATE * DURATION * 1.05 + 10;
+  const users = Math.max(USERS, Math.ceil(totalHabits / MAX_HABITS_PER_USER));
+  const habitsPerUser = Math.ceil(totalHabits / users);
   const tokens = [];
   const habits = [];
-  for (let u = 0; u < USERS; u++) {
+  for (let u = 0; u < users; u++) {
     const token = register(u);
     tokens.push(token);
     habits.push(createHabits(token, habitsPerUser));

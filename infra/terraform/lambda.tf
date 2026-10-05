@@ -82,3 +82,46 @@ resource "aws_lambda_function" "weekly_summary" {
     Project     = "progress-tracker"
   }
 }
+
+# Alarms. A failed call (the API unreachable, an error, or a token it rejects) makes the handler
+# raise, and Lambda retries an EventBridge invocation twice before dropping it. Nothing else
+# notices, so any error here needs a person to look at it.
+resource "aws_cloudwatch_metric_alarm" "daily_streak_reset_errors" {
+  alarm_name          = "progresstracker-daily-streak-reset-errors"
+  alarm_description   = "The streak-reset job failed to call the API: lapsed streaks are not being zeroed."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = aws_lambda_function.daily_streak_reset.function_name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_topic_arn == "" ? [] : [var.alarm_topic_arn]
+
+  tags = {
+    Environment = var.environment
+    Project     = "progress-tracker"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "weekly_summary_errors" {
+  alarm_name          = "progresstracker-weekly-summary-errors"
+  alarm_description   = "The weekly summary job failed to call the API: that week's summaries were not requested. Ask for them again with ?weekStart= once it is fixed."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = aws_lambda_function.weekly_summary.function_name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_topic_arn == "" ? [] : [var.alarm_topic_arn]
+
+  tags = {
+    Environment = var.environment
+    Project     = "progress-tracker"
+  }
+}

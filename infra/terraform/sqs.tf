@@ -15,8 +15,10 @@ resource "aws_sqs_queue" "completions_dlq" {
 
 resource "aws_sqs_queue" "completions" {
   name                       = "progresstracker-completions"
-  visibility_timeout_seconds = 60     # matches worker.visibilityTimeoutSeconds
-  message_retention_seconds  = 345600 # 4 days
+  visibility_timeout_seconds = 60 # matches worker.visibilityTimeoutSeconds
+  # 14 days, the maximum (it costs nothing extra). Nothing sends an expired event again: its outbox
+  # row is already marked published. So this is how long the worker can be down before rewards are lost.
+  message_retention_seconds = 1209600
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.completions_dlq.arn

@@ -1,11 +1,15 @@
 # Copy to terraform.tfvars (gitignored) and fill in real values before
 # running plan/apply. Never commit the real automation_token.
 
-aws_region       = "us-west-1"
-environment      = "dev"
-api_base_url     = "https://api.progresstracker.example.com"
+aws_region   = "us-west-1"
+environment  = "dev"
+api_base_url = "https://api.progresstracker.example.com"
+
+# A placeholder: plan refuses it. Use a random value of at least 32 characters
+# (openssl rand -base64 48), the same one the API has as AUTOMATION_TOKEN.
 automation_token = "CHANGE_ME"
 
-# Optional: an SNS topic to notify when a queue alarm fires (dead-letter queue not empty,
-# or the oldest message older than 5 minutes). Blank: the alarms only show in CloudWatch.
+# An SNS topic to notify when an alarm fires: the dead-letter queue is not empty, the oldest
+# message is older than 5 minutes, or a scheduled job failed. Blank: the alarms only show in
+# CloudWatch and notify no one, so a real deployment must set it.
 # alarm_topic_arn = "arn:aws:sns:us-west-1:123456789012:progresstracker-alerts"

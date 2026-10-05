@@ -11,7 +11,7 @@
 #   ./load/run.sh contention   many requests completing ONE habit at the same time (sync and async)
 #   ./load/run.sh compare      the same steady request rate in sync mode and in async mode
 #   ./load/run.sh streak       how long the worker takes to reward streaks of 1, 30 and 365 days
-#   ./load/run.sh reset        how long the nightly streak-reset job takes over 20,000 lapsed habits
+#   ./load/run.sh reset        how long the hourly streak-reset job takes over 20,000 lapsed habits
 #   ./load/run.sh chaos        steady load while the worker is killed and the queue is frozen
 #   ./load/run.sh drain        how fast the worker clears a backlog of queued completions
 #   ./load/run.sh all          all of the above
@@ -31,7 +31,7 @@ REQUESTS="${REQUESTS:-8000}"     # contention: total requests against the one ha
 VUS="${VUS:-200}"                # contention: how many are in flight at a time
 RATE="${RATE:-100}"              # compare/chaos: completions per second
 DURATION="${DURATION:-30}"       # compare: seconds of steady load (chaos always runs 40 s)
-USERS="${USERS:-50}"             # compare/chaos: users the completions are spread over
+USERS="${USERS:-50}"             # compare/chaos/drain: users the completions are spread over (at least enough for 100 habits each)
 P95_LIMIT_MS="${P95_LIMIT_MS:-200}"
 
 # Read by every `docker compose` call below.
@@ -262,10 +262,10 @@ PY
   check_database true seeded
 }
 
-# The nightly job that zeroes streaks nobody kept up. Timed over a table where every streak has lapsed.
+# The hourly job that zeroes streaks nobody kept up. Timed over a table where every streak has lapsed.
 scenario_reset() {
   local habits=20000 automation_token=load-test-token seconds response
-  log "streak reset: the nightly job over $habits habits whose streaks have lapsed"
+  log "streak reset: the hourly job over $habits habits whose streaks have lapsed"
   stack_up false "$automation_token"
 
   curl -fsS -X POST "$BASE_URL/api/auth/register" -H 'Content-Type: application/json' \

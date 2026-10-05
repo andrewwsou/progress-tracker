@@ -2,6 +2,10 @@
 # ecosystem so they arrive together; CI checks each one. Major versions (Spring Boot 5, React 20,
 # a new AWS provider, ...) are left out on purpose: those are planned upgrades, not chores.
 #
+# GitHub Actions are the exception. The workflows pin each action to a full commit SHA, with its
+# version in a comment, so a moved tag cannot change what runs. Dependabot updates the SHA and the
+# comment together for every new release, majors included, all in one grouped PR.
+#
 # Docker base images are not listed: the Dockerfiles use floating tags on the Java 17 line
 # (eclipse-temurin:17-jre, maven:3.9-eclipse-temurin-17), so every build already gets their
 # patches, and Dependabot can only propose changing the Java version hidden in the tag suffix.
