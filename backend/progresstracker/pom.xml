@@ -20,7 +20,7 @@
         <java.version>17</java.version>
         <!-- Empty unless JaCoCo's agent sets it; referenced by the test plugins' argLine. -->
         <argLine/>
-        <aws.sdk.version>2.55.10</aws.sdk.version>
+        <aws.sdk.version>2.56.0</aws.sdk.version>
         <jacoco.version>0.8.15</jacoco.version>
         <springdoc.version>3.1.1</springdoc.version>
         <!-- Coverage ratchet: `verify` fails if line coverage drops below this. Raise it, never lower it. -->
