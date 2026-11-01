@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.1</version>
+        <version>4.1.2</version>
         <relativePath/>
     </parent>
 
@@ -18,9 +18,9 @@
 
     <properties>
         <java.version>17</java.version>
-        <aws.sdk.version>2.55.10</aws.sdk.version>
-        <jacoco.version>0.8.15</jacoco.version>
-        <anthropic.version>2.68.0</anthropic.version>
+        <aws.sdk.version>2.57.6</aws.sdk.version>
+        <jacoco.version>0.8.16</jacoco.version>
+        <anthropic.version>2.75.0</anthropic.version>
         <wiremock.version>3.13.2</wiremock.version>
         <!-- Coverage ratchet: `verify` fails if line coverage drops below this. Raise it, never lower it. -->
         <coverage.minimum>0.85</coverage.minimum>
